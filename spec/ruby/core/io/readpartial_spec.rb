@@ -4,6 +4,8 @@ require File.expand_path('../fixtures/classes', __FILE__)
 describe "IO#readpartial" do
   before :each do
     @rd, @wr = IO.pipe
+    @rd.binmode
+    @wr.binmode
   end
 
   after :each do
@@ -12,7 +14,7 @@ describe "IO#readpartial" do
   end
 
   it "raises IOError on closed stream" do
-    lambda { IOSpecs.closed_file.readpartial(10) }.should raise_error(IOError)
+    lambda { IOSpecs.closed_io.readpartial(10) }.should raise_error(IOError)
 
     @rd.close
     lambda { @rd.readpartial(10) }.should raise_error(IOError)

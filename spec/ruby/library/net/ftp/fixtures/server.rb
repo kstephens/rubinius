@@ -219,13 +219,13 @@ module NetFTPSpecs
     end
     
     def stor(file)
-      tmp_file = tmp("#{file}file")
+      tmp_file = tmp("#{file}file", false)
       
       self.response("125 Data transfer starting.")
 
       mode = @restart_at ? "a" : "w"
 
-      File.open(tmp_file, mode) do |f|
+      File.open(tmp_file, mode + "b") do |f|
         loop do
           data = @datasocket.recv(1024)
           break if !data || data.empty?
