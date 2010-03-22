@@ -12,10 +12,10 @@ module Rubinius
     attr_accessor :flags_minus
     attr_accessor :flags_alternative
 
-    RADIXES = {"b" => 2, "o" => 8, "d" => 10, "x" => 16}
-    RADIXES.each { | k, v | RADIXES[k.upcase] = v }
+    RADIXES = {?b => 2, ?o => 8, ?d => 10, ?x => 16}
+    RADIXES.dup.each { | k, v | RADIXES[k.chr.upcase[0]] = v }
     RADIXES.freeze
-    ALTERNATIVES = {"o" => "0", "b" => "0b", "B" => "0B", "x" => "0x", "X" => "0X"}
+    ALTERNATIVES = {?o => "0", ?b => "0b", ?B => "0B", ?x => "0x", ?X => "0X"}
     PrecisionMax = 1048576 # Totally random value
 
     PERCENT = "%".freeze
@@ -199,9 +199,9 @@ module Rubinius
         val = get_arg(val)
       end
 
-      case @type
-      when E_LC, E, F_LC, G_LC, G
-        if (@type == G_LC || @type == G) && @flags_alternative
+      case typec = @type[0]
+      when ?e, ?E, ?f, ?g, ?G
+        if (typec == ?g || typec == ?G) && @flags_alternative
           @old_type = G_LC
           @type = F_LC
           precision = 4 unless precision
@@ -217,7 +217,7 @@ module Rubinius
           @flags_zero = @flags_space = @flags_plus = nil
           ret = pad(ret, width, precision)
         end
-      when U_LC
+      when ?u
         val = get_number(val)
         if val < 0
           unless val.kind_of?(Fixnum)
@@ -236,37 +236,37 @@ module Rubinius
         else
           ret = pad(val, width, precision)
         end
-      when D_LC, I_LC
+      when ?d, ?i
         val = get_number(val)
         ret = pad(val, width, precision)
-      when C_LC
+      when ?c
         val = val.to_int if val.respond_to?(:to_int)
         raise TypeError, "cannot convert #{val.class} into Integer" unless val.respond_to?(:chr) && val.respond_to?(:%)
         val = (val % 256).chr
         ret = pad(val, width, precision)
-      when S_LC
+      when ?s
         @flags_zero = @flags_space = @flags_plus = nil
         ret = pad(val, width, precision)
         ret.taint if val.tainted?
-      when P_LC
+      when ?p
         @flags_zero = @flags_space = @flags_plus = nil
         ret = pad(val.inspect, width, precision)
-      when O_LC, X_LC, X, B_LC, B
+      when ?o, ?x, ?X, ?b, ?B
         val = get_number(val)
         unless @flags_space || @flags_plus
-          ret = Number.new(val, RADIXES[@type]).rep
-          chr = val < 0 ? (RADIXES[@type] - 1).to_s(RADIXES[@type]) : ZERO
+          ret = Number.new(val, RADIXES[typec]).rep
+          chr = val < 0 ? (RADIXES[typec] - 1).to_s(RADIXES[typec]) : ZERO
           ret = pad(ret, width, precision, chr)
-          ret = (ALTERNATIVES[@type] ||= ''.freeze) + ret if @flags_alternative
+          ret = (ALTERNATIVES[typec] ||= ''.freeze) + ret if @flags_alternative
         else
           @flags_plus = nil if val < 0
-          ret = val.to_s(RADIXES[@type])
-          ret.gsub!(/^(\-?)/, "\1#{ALTERNATIVES[@type]}") if @flags_alternative
+          ret = val.to_s(RADIXES[typec])
+          ret.gsub!(/^(\-?)/, "\1#{ALTERNATIVES[typec]}") if @flags_alternative
           ret = pad(ret, width, precision)
           ret.gsub!(/ \-/, MINUS)
         end
-        ret = ret.downcase if @type == X_LC
-        ret = ret.upcase if @type == X
+        ret = ret.downcase if typec == ?x
+        ret = ret.upcase if typec == ?X
       end
       ret
     end
