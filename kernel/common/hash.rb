@@ -131,14 +131,44 @@ class Hash
     Thread.detect_recursion self, other do
       i = to_iter
       while entry = i.next(entry)
-        return false unless other[entry.key] == entry.value
+        other_entry = other.find_entry(entry.key)
+
+        # Other doesn't even have this key
+        return false unless other_entry
+
+        # Order of the comparison matters! We must compare our value with
+        # the other Hash's value and not the other way around.
+        return false unless entry.value == other_entry.value
       end
     end
     true
   end
 
-  alias_method :eql?, :==
+  def eql?(other)
+    # Just like ==, but uses eql? to compare values.
+    return true if self.equal? other
+    unless other.kind_of? Hash
+      return false unless other.respond_to? :to_hash
+      return other.eql?(self)
+    end
 
+    return false unless other.size == size
+
+    Thread.detect_recursion self, other do
+      i = to_iter
+      while entry = i.next(entry)
+        other_entry = other.find_entry(entry.key)
+
+        # Other doesn't even have this key
+        return false unless other_entry
+
+        # Order of the comparison matters! We must compare our value with
+        # the other Hash's value and not the other way around.
+        return false unless entry.value.eql?(other_entry.value)
+      end
+    end
+    true
+  end
   def hash
     val = size
     Thread.detect_outermost_recursion self do
@@ -151,6 +181,7 @@ class Hash
 
     return val
   end
+
   def [](key)
     if entry = find_entry(key)
       entry.value
@@ -160,6 +191,8 @@ class Hash
   end
 
   def []=(key, value)
+    Ruby.check_frozen
+
     redistribute @entries if @size > @max_entries
 
     key_hash = key.hash
@@ -220,6 +253,8 @@ class Hash
   end
 
   def delete(key)
+    Ruby.check_frozen
+
     key_hash = key.hash
 
     index = key_index key_hash
@@ -245,17 +280,12 @@ class Hash
   end
 
   def delete_if(&block)
+    Ruby.check_frozen
+
     return to_enum :delete_if unless block_given?
 
     select(&block).each { |k, v| delete k }
     self
-  end
-
-  def dup
-    hash = self.class.new
-    hash.send :initialize_copy, self
-    hash.taint if self.tainted?
-    hash
   end
 
   def each
@@ -326,7 +356,6 @@ class Hash
       entry = entry.next
     end
   end
-  private :find_entry
 
   def index(value)
     i = to_iter
@@ -407,8 +436,10 @@ class Hash
     while entry = i.next(entry)
       key = entry.key
       if block_given? and key? key
+        Ruby.check_frozen
         self.__store__ key, yield(key, self[key], entry.value)
       else
+        Ruby.check_frozen
         self.__store__ key, entry.value
       end
     end
@@ -494,6 +525,8 @@ class Hash
   end
 
   def reject!
+    Ruby.check_frozen
+
     return to_enum :reject! unless block_given?
 
     rejected = select { |k, v| yield k, v }
@@ -504,6 +537,8 @@ class Hash
   end
 
   def replace(other)
+    Ruby.check_frozen
+
     other = Type.coerce_to other, Hash, :to_hash
     return self if self.equal? other
 
@@ -539,6 +574,8 @@ class Hash
   end
 
   def shift
+    Ruby.check_frozen
+
     return default(nil) if empty?
 
     i = to_iter

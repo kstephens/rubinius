@@ -57,9 +57,7 @@ namespace rubinius {
     void** addresses;
 
     std::size_t total;
-    // TypedRoot<CompiledMethod*> original;
     TypeInfo* type;
-    std::vector<VMMethod*> blocks;
 
     native_int total_args;
     native_int required_args;
@@ -69,7 +67,6 @@ namespace rubinius {
     native_int number_of_locals;
 
     native_int call_count;
-    void* native_function;
 
     size_t number_of_caches_;
     InlineCache* caches;
@@ -100,6 +97,10 @@ namespace rubinius {
       llvm_function_ = func;
       jitted_impl_ = impl;
       jitted_bytes_ = bytes;
+    }
+
+    void* native_function() {
+      return jitted_impl_;
     }
 
     llvm::Function* llvm_function() {
@@ -192,7 +193,7 @@ namespace rubinius {
                                         Arguments& args);
 
     static Object* uncommon_interpreter(STATE, VMMethod* const vmm,
-      CallFrame* const call_frame, Arguments& args, native_int sp);
+      CallFrame* const call_frame, Arguments& args, int32_t entry_ip, native_int sp);
 
     void setup_argument_handler(CompiledMethod* meth);
 

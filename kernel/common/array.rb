@@ -497,7 +497,7 @@ class Array
     key = undefined
     i = to_iter
     while i.next
-      self[i.index] = key if i.item == obj
+      set_index(i.index, key) if i.item == obj
     end
 
     deleted = @tuple.delete @start, @total, key
@@ -541,7 +541,7 @@ class Array
     key = undefined
     i = to_iter
     while i.next
-      self[i.index] = key if yield i.item
+      set_index(i.index, key) if yield i.item
     end
 
     deleted = @tuple.delete @start, @total, key
@@ -1119,8 +1119,7 @@ class Array
   # invoked on subclasses. See #reject!
   def reject(&block)
     return to_enum :reject unless block_given?
-
-    Array.new(self).reject!(&block) || self
+    dup.reject!(&block) || self
   end
 
   # Equivalent to #delete_if except that returns nil if
@@ -1129,7 +1128,7 @@ class Array
     return to_enum :reject! unless block_given?
 
     was = length
-    self.delete_if(&block)
+    delete_if(&block)
 
     self if was != length     # Too clever?
   end
@@ -1303,9 +1302,9 @@ class Array
 
     if (@total - @start) < 6
       if block
-        isort_block! @start, (@total - 1), block
+        isort_block! @start, (@start + @total) - 1, block
       else
-        isort! @start, (@total - 1)
+        isort! @start, (@start + @total) - 1
       end
     else
       if block
@@ -1800,12 +1799,26 @@ class Array
   def isort!(left, right)
     i = left + 1
 
+    tup = @tuple
+
     while i <= right
       j = i
 
-      while j > @start and Type.coerce_to_comparison(@tuple.at(j - 1), @tuple.at(j)) > 0
-        @tuple.swap(j, (j - 1))
-        j -= 1
+      while j > @start
+        jp = j - 1
+        el1 = tup.at(jp)
+        el2 = tup.at(j)
+
+        unless cmp = (el1 <=> el2)
+          raise ArgumentError, "comparison of #{el1.inspect} with #{el2.inspect} failed (#{j})"
+        end
+
+        break unless cmp > 0
+
+        tup.put(j, el1)
+        tup.put(jp, el2)
+
+        j = jp
       end
 
       i += 1
@@ -1840,6 +1853,7 @@ class Array
 
   module Frozen
     def []=(*args) frozen_error; end
+    def set_index(*args) frozen_error; end
     def <<(*args) frozen_error; end
     def clear() frozen_error; end
     def compact!() frozen_error; end

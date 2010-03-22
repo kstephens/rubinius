@@ -215,7 +215,9 @@ class Module
       @method_table.delete name
       Rubinius::VM.reset_method_cache(name)
 
-      method_removed(name) if respond_to? :method_removed
+      # Use __respond_to_eh__ to avoid hitting unexpected #respod_to?
+      # overrides.
+      method_removed(name) if __respond_to_eh__ :method_removed
     end
 
     nil
@@ -337,6 +339,8 @@ class Module
       raise TypeError, "wrong argument type #{meth.class} (expected Proc/Method)"
     end
 
+    method_added(name)
+
     @method_table.store name.to_sym, cm, :public
     Rubinius::VM.reset_method_cache(name.to_sym)
     meth
@@ -345,7 +349,7 @@ class Module
   private :define_method
 
   def extend_object(obj)
-    append_features obj.metaclass
+    append_features Rubinius.object_metaclass(obj)
   end
 
   def include?(mod)
@@ -523,7 +527,7 @@ class Module
   end
 
   def const_missing(name)
-    raise NameError, "Missing or uninitialized constant: #{name}"
+    raise NameError, "Missing or uninitialized constant: #{self.__name__}::#{name}"
   end
 
   def <(other)
