@@ -404,6 +404,7 @@ module Rubinius
     end
 
     class Number
+      attr_reader :number, :radix, :pad
 
       def initialize(number, radix)
         @number = number
