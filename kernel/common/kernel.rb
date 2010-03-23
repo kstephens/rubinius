@@ -166,7 +166,7 @@ module Kernel
     if target.kind_of? IO
       target.printf(*args)
     elsif target.kind_of? String
-      $stdout << Rubinius::Sprintf.new(target, *args).parse
+      $stdout << Rubinius::SprintfCompiler.fmt_splat(target, *args)
     else
       raise TypeError, "The first arg to printf should be an IO or a String"
     end
@@ -175,7 +175,7 @@ module Kernel
   module_function :printf
 
   def sprintf(str, *args)
-    Rubinius::Sprintf.new(str, *args).parse
+    Rubinius::SprintfCompiler.fmt_splat(target, *args)
   end
   alias_method :format, :sprintf
   module_function :sprintf

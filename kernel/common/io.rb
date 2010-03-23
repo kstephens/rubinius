@@ -1011,7 +1011,7 @@ class IO
   # Formats and writes to ios, converting parameters under
   # control of the format string. See Kernel#sprintf for details.
   def printf(fmt, *args)
-    write Rubinius::Sprintf.new(fmt, *args).parse
+    write Rubinius::SprintfCompiler.fmt_splat(fmt, *args)
   end
 
   ##

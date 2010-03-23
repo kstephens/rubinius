@@ -47,9 +47,9 @@ class String
   #   "%-5s: %08x" % [ "ID", self.id ]   #=> "ID   : 200e14d6"
   def %(args)
     if args.is_a? String    # Fixes "%s" % ""
-      Rubinius::Sprintf.new(self, args).parse
+      Rubinius::SprintfCompiler.fmt_splat(self, args)
     else
-      Rubinius::Sprintf.new(self, *args).parse
+      Rubinius::SprintfCompiler.fmt_splat(self, *args)
     end
   end
 

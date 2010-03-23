@@ -43,7 +43,7 @@ end
 
 # See vm.rake for more information
 desc "Build everything that needs to be built at default level."
-task :build => ["build:normal", "gem_bootstrap"]
+task :build => [ :sprintf_compiler, "build:normal", "gem_bootstrap"]
 
 desc "Recompile all ruby system files"
 task :rebuild => %w[clean build]
@@ -150,3 +150,13 @@ task :todos do
   sh "grep", "-Rn", "@todo", "kernel"
   sh "grep", "-Rn", "TODO", "kernel"
 end
+
+desc "Create Rubinus::SprintfCompiler"
+task :sprintf_compiler do
+  File.open("kernel/common/sprintf_compiler.rb", "w+") do | fh |
+    fh.puts "module Rubinius"
+    fh.write File.read("../ruby_sprintf_compiler/lib/sprintf_compiler.rb")
+    fh.write "end # module" 
+  end
+end
+
