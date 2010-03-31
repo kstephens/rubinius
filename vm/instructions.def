@@ -554,7 +554,7 @@ end
 #   test onto the stack.
 
 instruction passed_arg(index) [ -- boolean ]
-  if(index < (int)args.total()) {
+  if(index < (int)call_frame->arguments->total()) {
     stack_push(Qtrue);
   } else {
     stack_push(Qfalse);
@@ -666,7 +666,7 @@ instruction raise_exc() [ -- ] => raise
   RUN_EXCEPTION();
 end
 
-instruction setup_unwind(ip type) [ -- ]
+instruction setup_unwind(ip type) [ -- ] => handler
   interp_assert(current_unwind < kMaxUnwindInfos);
   UnwindInfo& info = unwinds[current_unwind++];
   info.target_ip = ip;
@@ -1444,7 +1444,7 @@ end
 #   test onto the stack.
 
 instruction passed_blockarg(count) [ -- boolean ]
-  if(count == (int)args.total()) {
+  if(count == (int)call_frame->arguments->total()) {
     stack_push(Qtrue);
   } else {
     stack_push(Qfalse);
@@ -1501,15 +1501,15 @@ end
 #   The result is then pushed onto the stack.
 
 instruction cast_for_single_block_arg() [ -- argument ]
-  int k = args.total();
+  int k = call_frame->arguments->total();
   if(k == 0) {
     stack_push(Qnil);
   } else if(k == 1) {
-    stack_push(args.get_argument(0));
+    stack_push(call_frame->arguments->get_argument(0));
   } else {
     Array* ary = Array::create(state, k);
     for(int i = 0; i < k; i++) {
-      ary->set(state, i, args.get_argument(i));
+      ary->set(state, i, call_frame->arguments->get_argument(i));
     }
     stack_push(ary);
   }
@@ -1539,12 +1539,13 @@ end
 
 instruction cast_for_multi_block_arg() [ -- array ]
   /* If there is only one argument and that thing is an array... */
-  if(args.total() == 1 && kind_of<Array>(args.get_argument(0))) {
-    stack_push(args.get_argument(0));
+  if(call_frame->arguments->total() == 1 &&
+          kind_of<Array>(call_frame->arguments->get_argument(0))) {
+    stack_push(call_frame->arguments->get_argument(0));
   } else {
-    Array* ary = Array::create(state, args.total());
-    for(size_t i = 0; i < args.total(); i++) {
-      ary->set(state, i, args.get_argument(i));
+    Array* ary = Array::create(state, call_frame->arguments->total());
+    for(size_t i = 0; i < call_frame->arguments->total(); i++) {
+      ary->set(state, i, call_frame->arguments->get_argument(i));
     }
     stack_push(ary);
   }
@@ -1578,9 +1579,9 @@ end
 #   The resulting array is then pushed back onto the stack.
 
 instruction cast_for_splat_block_arg() [ -- arguments ]
-  Array* ary = Array::create(state, args.total());
-  for(size_t i = 0; i < args.total(); i++) {
-    ary->set(state, i, args.get_argument(i));
+  Array* ary = Array::create(state, call_frame->arguments->total());
+  for(size_t i = 0; i < call_frame->arguments->total(); i++) {
+    ary->set(state, i, call_frame->arguments->get_argument(i));
   }
 
   stack_push(ary);
@@ -1674,14 +1675,32 @@ instruction string_build(count) [ +count -- string ]
 
   // Figure out the total size
   for(int i = 0; i < count; i++) {
-    size += as<String>(stack_back(i))->size();
+    Object* obj = stack_back(i);
+    String* str = try_as<String>(obj);
+
+    if(str) {
+      size += str->size();
+    } else {
+      // This isn't how MRI does this. If sub isn't a String, it converts the
+      // the original object via any_to_s, not the bad value returned from #to_s.
+      // This quite a bit harder to implement in rubinius atm, so i'm opting for
+      // this way instead.
+
+      str = obj->to_s(state, false);
+      size += str->size();
+
+      // TRICKY! Reuse the stack to store our new String value.
+      stack_back(i) = str;
+    }
   }
 
   String* str = String::create(state, 0, size);
   uint8_t* pos = str->byte_address();
 
   for(int i = count - 1; i >= 0; i--) {
-    String* sub = as<String>(stack_back(i));
+    Object* obj = stack_back(i);
+    String* sub = as<String>(obj);
+
     memcpy(pos, sub->byte_address(), sub->size());
     pos += sub->size();
   }
@@ -2397,7 +2416,7 @@ instruction zsuper(literal) [ block -- value ]
 end
 
 instruction push_block_arg() [ -- block ]
-  stack_push(args.block());
+  stack_push(call_frame->arguments->block());
 end
 
 instruction push_undef() [ -- value ]

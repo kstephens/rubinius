@@ -1,5 +1,5 @@
 module Rubinius
-  class CompilerNG
+  class Compiler
     Stages = { }
 
     class Stage
@@ -105,16 +105,14 @@ module Rubinius
         super
         compiler.encoder = self
         @encoder = InstructionSequence::Encoder
-        @calculator = StackDepthCalculator
       end
 
-      def processor(encoder, calculator)
+      def processor(encoder)
         @encoder = encoder
-        @calculator = calculator
       end
 
       def run
-        @input.encode @encoder, @calculator
+        @input.encode @encoder
         @output = @input
         run_next
       end

@@ -221,6 +221,29 @@ namespace rubinius {
       }
     }
 
+    for(std::list<gc::WriteBarrier*>::iterator wbi = object_memory_->aux_barriers().begin();
+        wbi != object_memory_->aux_barriers().end();
+        wbi++) {
+      gc::WriteBarrier* wb = *wbi;
+      ObjectArray* rs = wb->remember_set();
+      for(ObjectArray::iterator oi = rs->begin();
+          oi != rs->end();
+          oi++) {
+        tmp = *oi;
+
+        if(tmp) {
+          assert(tmp->zone() == MatureObjectZone);
+          assert(!tmp->forwarded_p());
+
+          if(!tmp->marked_p(object_memory_->mark())) {
+            cleared++;
+            *oi = NULL;
+          }
+        }
+      }
+    }
+
+
     // Now, calculate how much space we're still using.
     immix::Chunks& chunks = gc_.block_allocator().chunks();
     immix::AllBlockIterator iter(chunks);
@@ -316,7 +339,7 @@ namespace rubinius {
         i->object = saw_object(i->object);
 
         if(!i->object->marked_p(object_memory_->mark())) {
-          i->status = FinalizeObject::eQueued;
+          i->queued();
           object_memory_->to_finalize().push_back(&fi);
         }
         break;
@@ -332,7 +355,7 @@ namespace rubinius {
           continue;
         } else {
           // RESURECTION!
-          i->status = FinalizeObject::eQueued;
+          i->queued();
           i->object = saw_object(i->object);
         }
         break;

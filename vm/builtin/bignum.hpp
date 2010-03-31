@@ -138,7 +138,9 @@ namespace rubinius {
     // Ruby.primitive! :bignum_pow
     Object* pow(STATE, Fixnum *exponent);
     // Ruby.primitive! :bignum_pow
-    Float* pow(STATE, Float *exponent);
+    Object* pow(STATE, Bignum* exponent);
+    // Ruby.primitive! :bignum_pow
+    Float*  pow(STATE, Float *exponent);
 
     // Ruby.primitive! :bignum_gt
     Object* gt(STATE, Fixnum* b);
@@ -177,7 +179,7 @@ namespace rubinius {
     Array* coerce(STATE, Fixnum* other);
 
     // Ruby.primitive :bignum_to_s
-    String* to_s(STATE, Integer* radix);
+    String* to_s(STATE, Fixnum* base);
 
     // Format the bignum using +radix+ and store the result
     // in +buf+ of size +sz+. This will always NUL-terminate +buf+.

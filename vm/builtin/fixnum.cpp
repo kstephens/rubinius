@@ -63,7 +63,7 @@ namespace rubinius {
 
 #define SQRT_LONG_MAX ((native_int)1<<((sizeof(native_int)*CHAR_BIT-1)/2))
 /*tests if N*N would overflow*/
-#define FIT_SQRT(n) (((n)<SQRT_LONG_MAX)&&((n)>=-SQRT_LONG_MAX))
+#define FIT_SQRT(n) (((n)<SQRT_LONG_MAX)&&((n)>-SQRT_LONG_MAX))
 
   Integer* Fixnum::mul(STATE, Fixnum* other) {
     native_int a  = to_native();
@@ -76,29 +76,7 @@ namespace rubinius {
       return Fixnum::from(a * b);
     }
 
-    if(a > 0) {
-      if(b > 0) {
-        if(a > (FIXNUM_MAX / b)) {
-          return Bignum::from(state, a)->mul(state, other);
-        }
-      } else {
-        if (b < (FIXNUM_MIN / a)) {
-          return Bignum::from(state, a)->mul(state, other);
-        }
-      }
-    } else {
-      if(b > 0) {
-        if(a < (FIXNUM_MIN / b)) {
-          return Bignum::from(state, a)->mul(state, other);
-        }
-      } else {
-        if(b < (FIXNUM_MAX / a)) {
-          return Bignum::from(state, a)->mul(state, other);
-        }
-      }
-    }
-
-    return Fixnum::from(a * b);
+    return Bignum::from(state, a)->mul(state, other);
   }
 
   Integer* Fixnum::mul(STATE, Bignum* other) {
@@ -190,6 +168,25 @@ namespace rubinius {
   }
 
   Object* Fixnum::pow(STATE, Fixnum* exponent) {
+    native_int i = to_native();
+    native_int j = exponent->to_native();
+
+    if(j == 0) return Fixnum::from(1);
+    if(j == 1) return this;
+
+    if(i == 0) {
+      if(j > 0) return Fixnum::from(0);
+      return Float::create(state, INFINITY);
+    }
+
+    if(i == 1) return Fixnum::from(1);
+
+    return Bignum::from(state, to_native())->pow(state, exponent);
+  }
+
+  Object* Fixnum::pow(STATE, Bignum* exponent) {
+    native_int i = to_native();
+    if(i == 0 || i == 1) return this;
     return Bignum::from(state, to_native())->pow(state, exponent);
   }
 
@@ -378,7 +375,7 @@ namespace rubinius {
     k = to_native();
 
     if(j < 2 || j > 36) {
-      Exception::argument_error(state, "invalid base");
+      Exception::argument_error(state, "base must be between 2 and 36");
     }
 
     /* Algorithm taken from 1.8.4 rb_fix2str */

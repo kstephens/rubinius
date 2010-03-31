@@ -146,7 +146,7 @@ void* XCALLOC(size_t items, size_t bytes);
 /**
  *  In MRI, ID represents an interned string, i.e. a Symbol.
  *
- *  In rbx, this is a Symbol pointer.
+ *  In rbx, this is a raw Symbol.
  */
 #define ID    intptr_t
 
@@ -227,6 +227,7 @@ extern "C" {
     cCApiTime,
     cCApiTrue,
     cCApiProc,
+    cCApiGC,
 
     cCApiArgumentError,
     cCApiEOFError,
@@ -349,7 +350,17 @@ struct RFloat {
 #define RFLOAT(d)       capi_rfloat_struct(d)
 
 // To provide nicer error reporting
-#define RHASH(obj) assert(???? && "RHASH() is not supported")
+#define RHASH(obj) assert("RHASH() is not supported")
+
+typedef struct {
+  void* dummy;
+} rb_io_t;
+
+#define HAVE_RB_IO_T 1
+
+// Fake it out, just make the ptr be the val
+// MRI checks also that it's not closed...
+#define GetOpenFile(val, ptr) (ptr) = ((rb_io_t*)(val))
 
 /*
  * The immediates.
@@ -413,6 +424,7 @@ struct RFloat {
 #define rb_mComparable        (capi_get_constant(cCApiComparable))
 #define rb_mEnumerable        (capi_get_constant(cCApiEnumerable))
 #define rb_mKernel            (capi_get_constant(cCApiKernel))
+#define rb_mGC                (capi_get_constant(cCApiGC))
 
 
 /* Exception classes. */
@@ -469,6 +481,12 @@ struct RFloat {
 
 /** True if the value is a Fixnum. */
 #define FIXNUM_P(f)       (((long)(f))&FIXNUM_FLAG)
+#define FIXNUM_WIDTH ((8 * sizeof(native_int)) - TAG_FIXNUM_SHIFT - 1)
+#define FIXNUM_MAX   (((native_int)1 << FIXNUM_WIDTH) - 1)
+#define FIXNUM_MIN   (-(FIXNUM_MAX))
+#define POSFIXABLE(f) ((f) <= FIXNUM_MAX)
+#define NEGFIXABLE(f) ((f) >= FIXNUM_MIN)
+#define FIXABLE(f) (POSFIXABLE(f) && NEGFIXABLE(f))
 
 /** Convert a Fixnum to a long int. */
 #define FIX2LONG(x)       (((long)(x)) >> 1)
@@ -495,7 +513,7 @@ struct RFloat {
 #define FIX2UINT(x)       ((unsigned int)FIX2ULONG(x))
 
 #ifndef SYMBOL_P
-#define SYMBOL_P(obj)     (((unsigned int)obj & 7) == 6)
+#define SYMBOL_P(obj)     (((unsigned int)(obj) & 7) == 6)
 #endif
 
 /** Get a handle for the Symbol object represented by ID. */
@@ -548,6 +566,12 @@ double rb_num2dbl(VALUE);
 /** The pointer to the array's data. */
 #define RARRAY_PTR(ary)   (RARRAY(ary)->ptr)
 
+/** The source pattern for a regex. */
+#define RREGEXP_SRC(reg)  rb_reg_source(reg)
+
+/** The options of the regex. */
+#define RREGEXP_OPTIONS(reg) rb_reg_options(reg)
+
 /** The length of string str. */
 #define RSTRING_LEN(str)  rb_str_len(str)
 
@@ -595,6 +619,8 @@ double rb_num2dbl(VALUE);
 /** Convert unsigned int to a Ruby Integer. @todo Should we warn if overflowing? --rue */
 #define UINT2FIX(i)       UINT2NUM((i))
 
+#define LONG2FIX(i) INT2FIX(i)
+
 #define LL2NUM(val) rb_ll2inum(val)
 #define ULL2NUM(val) rb_ull2inum(val)
 
@@ -621,16 +647,6 @@ double rb_num2dbl(VALUE);
                                            CApiGenericFunction fptr,
                                            int arity,
                                            CApiMethodKind kind);
-
-  /** Call method on receiver, args as varargs. */
-  VALUE   capi_rb_funcall(const char* file, int line,
-                                        VALUE receiver, ID method_name,
-                                        int arg_count, ...);
-
-  /** Call the method with args provided in a C array. */
-  VALUE   capi_rb_funcall2(const char* file, int line,
-                                         VALUE receiver, ID method_name,
-                                         int arg_count, VALUE* args);
 
   /** Retrieve a Handle to a globally available object. @internal. */
   VALUE   capi_get_constant(CApiConstant type);
@@ -793,10 +809,17 @@ double rb_num2dbl(VALUE);
   /** Raises an exception if obj_handle is frozen. */
   void    rb_check_frozen(VALUE obj_handle);
 
-  /** Raises an exception if obj_handle is not the same type as 'type'. */
-  void    rb_check_type(VALUE obj_handle, CApiType type);
+  /** check if obj is frozen. */
+  VALUE     rb_obj_frozen_p(VALUE obj);
+#define OBJ_FROZEN(obj) (RTEST(rb_obj_frozen_p(obj)))
 
-#define Check_Type(v,t) rb_check_type((VALUE)(v),t)
+  /** raise error on class */
+  void    rb_error_frozen(const char* what);
+
+  /** Raises an exception if obj_handle is not the same type as 'type'. */
+  void    rb_check_type(VALUE obj_handle, int type);
+
+#define Check_Type(v,t) rb_check_type((VALUE)(v),(t))
 
   /**
    *  Safe type conversion.
@@ -844,6 +867,11 @@ double rb_num2dbl(VALUE);
   /** Set constant on the given module */
   void rb_const_set(VALUE module_handle, ID name, VALUE const_handle);
 
+  VALUE rb_mod_remove_const(VALUE mod, VALUE name);
+  VALUE rb_mod_ancestors(VALUE mod);
+  VALUE rb_mod_name(VALUE mod);
+  VALUE rb_module_new(void);
+
   /** Parses a string into a double value. If badcheck is true, raises an
    * exception if the string contains non-digit or '.' characters.
    */
@@ -867,6 +895,9 @@ double rb_num2dbl(VALUE);
 
   /** Set module's named class variable to given value. Returns the value. @@ is optional. */
   VALUE   rb_cvar_set(VALUE module_handle, ID name, VALUE value, int unused);
+  
+  /** Set module's named class variable to given value. */
+  void rb_define_class_variable(VALUE klass, const char* name, VALUE val);
 
   VALUE   rb_data_object_alloc(VALUE klass, void* sval,
       RUBY_DATA_FUNC mark, RUBY_DATA_FUNC free);
@@ -876,6 +907,9 @@ double rb_num2dbl(VALUE);
 
   /** Define an .allocate for the given class. Should take no args and return a VALUE. */
   void    rb_define_alloc_func(VALUE class_handle, CApiAllocFunction allocator);
+
+  /** Undefine the .allocate for the given class. */
+  void    rb_undef_alloc_func(VALUE class_handle);
 
   /** Ruby's attr_* for given name. Nonzeros to toggle read/write. */
   void    rb_define_attr(VALUE module_handle, const char* attr_name,
@@ -895,8 +929,8 @@ double rb_num2dbl(VALUE);
 
   /** Generate a NativeMethod to represent a method defined as a C function. Records file. */
   #define rb_define_method(mod, name, fptr, arity) \
-          capi_define_method(__FILE__, mod, name, \
-                                           (CApiGenericFunction)fptr, arity, \
+          capi_define_method(__FILE__, (mod), (name), \
+                                           (CApiGenericFunction)(fptr), (arity), \
                                            cCApiPublicMethod)
 
   /** Defines the method on Kernel. */
@@ -914,20 +948,20 @@ double rb_num2dbl(VALUE);
 
   /** Generate a NativeMethod to represent a private method defined in the C function. */
   #define rb_define_private_method(mod, name, fptr, arity) \
-          capi_define_method(__FILE__, mod, name, \
-                                           (CApiGenericFunction)fptr, arity, \
+          capi_define_method(__FILE__, (mod), (name), \
+                                           (CApiGenericFunction)(fptr), (arity), \
                                            cCApiPrivateMethod)
 
   /** Generate a NativeMethod to represent a protected method defined in the C function. */
   #define rb_define_protected_method(mod, name, fptr, arity) \
-          capi_define_method(__FILE__, mod, name, \
-                                           (CApiGenericFunction)fptr, arity, \
+          capi_define_method(__FILE__, (mod), (name), \
+                                           (CApiGenericFunction)(fptr), (arity), \
                                            cCApiProtectedMethod)
 
   /** Generate a NativeMethod to represent a singleton method. @see capi_define_method. */
   #define rb_define_singleton_method(mod, name, fptr, arity) \
-          capi_define_method(__FILE__, mod, name, \
-                                           (CApiGenericFunction)fptr, arity, \
+          capi_define_method(__FILE__, (mod), (name), \
+                                           (CApiGenericFunction)(fptr), (arity), \
                                            cCApiSingletonMethod)
 
   /** Create an Exception from a class, C string and length. */
@@ -942,33 +976,35 @@ double rb_num2dbl(VALUE);
   /** Raises passed exception handle */
   void    rb_exc_raise(VALUE exc_handle);
 
+  /** Return the current exception */
+  VALUE   rb_errinfo();
+#define ruby_errinfo rb_errinfo()
+
+  /** Set the current exception */
+  void    rb_set_errinfo(VALUE err);
+
+  // To advertise we have rb_errinfo to extensions
+#define HAVE_RB_ERRINFO 1
+
   /** Remove a previously declared global variable. */
   void    rb_free_global(VALUE global_handle);
 
   /** Freeze object and return it. */
   VALUE   rb_obj_freeze(VALUE obj);
 
+  /** Taint an object and return it */
+  VALUE rb_obj_taint(VALUE obj);
+
   /**
    *  Call method on receiver, args as varargs. Calls private methods.
-   *
-   *  @todo Requires C99, change later for production code if needed.
-   *        Pretty much all C++ compilers support this too.  It can be
-   *        done by introducing an intermediary function to grab the
-   *        debug info, but it is far uglier. --rue
-   *
-   *  See http://gcc.gnu.org/onlinedocs/cpp/Variadic-Macros.html
-   *  regarding use of ##__VA_ARGS__.
    */
-  #define rb_funcall(receiver, method_name, arg_count, ...) \
-          capi_rb_funcall(__FILE__, __LINE__, \
-                                        (receiver), (method_name), \
-                                        (arg_count) , ##__VA_ARGS__)
+  VALUE   rb_funcall(VALUE receiver, ID method_name,
+                     int arg_count, ...);
+
 
   /** Call the method with args provided in a C array. Calls private methods. */
-  #define rb_funcall2(receiver, method_name, arg_count, args) \
-          capi_rb_funcall2(__FILE__, __LINE__, \
-                                         (receiver), (method_name), \
-                                         (arg_count), (args) )
+  VALUE   rb_funcall2(VALUE receiver, ID method_name,
+                      int arg_count, const VALUE* args);
 
   /** @todo define rb_funcall3, which is the same as rb_funcall2 but
    * will not call private methods.
@@ -983,6 +1019,10 @@ double rb_num2dbl(VALUE);
 
   /** Return the value associated with the key, excluding default values. */
   VALUE   rb_hash_lookup(VALUE self, VALUE key);
+
+  // There is code that uses RHASH_TBL to detect if rb_hash_lookup
+  // is available. I know, silly.
+#define RHASH_TBL 1
 
   /** Set the value associated with the key. */
   VALUE   rb_hash_aset(VALUE self, VALUE key, VALUE value);
@@ -1007,10 +1047,18 @@ double rb_num2dbl(VALUE);
   VALUE   rb_io_write(VALUE io, VALUE str);
 
   int     rb_io_fd(VALUE io);
+#define HAVE_RB_IO_FD 1
+
   void    rb_io_wait_readable(int fd);
   void    rb_io_wait_writable(int fd);
+
+  void    rb_io_set_nonblock(rb_io_t *dummy);
+
   void    rb_thread_wait_fd(int fd);
 
+  /** convert a native int to Fixnum */
+  VALUE rb_int2inum(long n);
+  
   /** Mark ruby object ptr. */
   void    rb_gc_mark(VALUE ptr);
 
@@ -1058,8 +1106,7 @@ double rb_num2dbl(VALUE);
   void    rb_obj_call_init(VALUE object_handle, int arg_count, VALUE* args);
 
   /** Returns the Class object this object is an instance of. */
-  #define rb_obj_class(object_handle) \
-          rb_class_of((object_handle))
+  #define rb_obj_class(object_handle) rb_class_of((object_handle))
 
   /** String representation of the object's class' name. You must free this string. */
   char*   rb_obj_classname(VALUE object_handle);
@@ -1094,6 +1141,10 @@ double rb_num2dbl(VALUE);
   /** Call #to_s on object. */
   VALUE   rb_obj_as_string(VALUE obj_handle);
 
+  VALUE   rb_obj_instance_eval(int argc, VALUE* argv, VALUE self);
+
+  VALUE   rb_any_to_s(VALUE obj);
+  
   /** Return a clone of the object by calling the method bound
    * to Kernel#clone (i.e. does NOT call specialized #clone method
    * on obj_handle if one exists).
@@ -1147,6 +1198,16 @@ double rb_num2dbl(VALUE);
    * Continue raising a pending exception if status is not 0
    */
   void rb_jump_tag(int status);
+  
+  /**
+   * Retrieve the source pattern for the regular expression.
+   */
+  VALUE rb_reg_source(VALUE r);
+  
+  /**
+   * Retrieve the pattern options for the regular expression.
+   */
+  int rb_reg_options(VALUE r);
 
   /**
    *  Require a Ruby file.
@@ -1382,9 +1443,9 @@ double rb_num2dbl(VALUE);
   VALUE   rb_marshal_load(VALUE string);
 
   VALUE   rb_float_new(double val);
-  
+
   VALUE   rb_Float(VALUE object_handle);
-  
+
   VALUE   rb_Integer(VALUE object_handle);
 
   void    rb_bug(const char *fmt, ...);

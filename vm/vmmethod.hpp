@@ -39,8 +39,7 @@ namespace rubinius {
 
   typedef Object* (*Runner)(STATE, VMMethod* const vmm, CallFrame* const call_frame);
   typedef Object* (*InterpreterRunner)(STATE, VMMethod* const vmm,
-                                       InterpreterCallFrame* const call_frame,
-                                       Arguments& args);
+                                       InterpreterCallFrame* const call_frame);
 
   class VMMethod : public CodeResource {
   public:
@@ -176,8 +175,7 @@ namespace rubinius {
      *  Dispatch method on the defined interpreter.
      */
     static Object* run_interpreter(STATE, VMMethod* const vmm,
-                                   InterpreterCallFrame* const call_frame,
-                                   Arguments& args);
+                                   InterpreterCallFrame* const call_frame);
 
     /**
      *  Interpreting implementation.
@@ -185,15 +183,13 @@ namespace rubinius {
      *  @see  vm/llvm/instructions.cpp for the code.
      */
     static Object* interpreter(STATE, VMMethod* const vmm,
-                               InterpreterCallFrame* const call_frame,
-                               Arguments& args);
+                               InterpreterCallFrame* const call_frame);
 
     static Object* debugger_interpreter(STATE, VMMethod* const vmm,
-                                        InterpreterCallFrame* const call_frame,
-                                        Arguments& args);
+                                        InterpreterCallFrame* const call_frame);
 
     static Object* uncommon_interpreter(STATE, VMMethod* const vmm,
-      CallFrame* const call_frame, Arguments& args, int32_t entry_ip, native_int sp);
+      CallFrame* const call_frame, int32_t entry_ip, native_int sp);
 
     void setup_argument_handler(CompiledMethod* meth);
 
@@ -213,48 +209,78 @@ namespace rubinius {
      */
     class Iterator {
     public:
-      VMMethod* vmm;
-      std::size_t position;
+      opcode* stream_;
+      size_t position_;
+      size_t size_;
 
-      Iterator(VMMethod* vmm) :
-        vmm(vmm), position(0) { }
+      Iterator(VMMethod* vmm)
+        : stream_(vmm->opcodes)
+        , position_(0)
+        , size_(vmm->total)
+      {}
+
+      Iterator(opcode* stream, size_t size)
+        : stream_(stream)
+        , position_(0)
+        , size_(size)
+      {}
+
+      size_t position() {
+        return position_;
+      }
+
+      size_t next_position() {
+        return position_ + width();
+      }
 
       void inc() {
-        position += width();
+        position_ += width();
+      }
+
+      bool advance() {
+        size_t next = next_position();
+        if(next >= size_) return false;
+
+        position_ = next;
+        return true;
+      }
+
+      bool last_instruction() {
+        return next_position() >= size_;
       }
 
       opcode op() {
-        return vmm->opcodes[position] & 0x00ffff;
+        return stream_[position_] & 0x00ffff;
       }
 
-      int operand1() {
-        return vmm->opcodes[position + 1];
+      opcode operand1() {
+        return stream_[position_ + 1];
       }
 
-      int operand2() {
-        return vmm->opcodes[position + 2];
+      opcode operand2() {
+        return stream_[position_ + 2];
       }
 
-      std::size_t next_pos() {
-        return position + width();
+      int next_pos() {
+        return position_ + width();
       }
 
       opcode next() {
-        return vmm->opcodes[next_pos()];
+        return stream_[next_pos()];
       }
 
-      std::size_t width() {
+      size_t width() {
         opcode op = this->op();
 #include "gen/instruction_sizes.hpp"
         return width;
       }
 
-      std::size_t args() {
+      size_t args() {
         return width() - 1;
       }
 
       bool end() {
-        return position >= vmm->total;
+        return position_ >= size_;
       }
     };
 

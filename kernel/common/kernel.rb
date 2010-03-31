@@ -227,9 +227,12 @@ module Kernel
   # We don't seed the RNG by default with a combination of time, pid and
   # sequence number
   #++
+  #
 
-  def srand(seed=0)
-    cur = Kernel.current_srand
+  @current_seed = 0
+
+  def self.srand(seed=0)
+    cur = @current_srand
     if seed == 0
       begin
         File.open("/dev/urandom", "r") do |f|
@@ -240,19 +243,17 @@ module Kernel
       end
     end
     FFI::Platform::POSIX.srand(seed.to_i)
-    Kernel.current_srand = seed.to_i
+    @current_srand = seed.to_i
     cur
   end
-  module_function :srand
 
-  @current_seed = 0
-  def self.current_srand
-    @current_seed
+  # Redispatch to Kernel so we can store @current_srand as an ivar
+  # on Kernel without an accessor.
+  def srand(seed=0)
+    Kernel.srand(seed)
   end
 
-  def self.current_srand=(val)
-    @current_seed = val
-  end
+  private :srand
 
   def rand(max=0)
     max = max.to_i.abs
@@ -261,10 +262,12 @@ module Kernel
     # scale result of rand to a domain between 0 and max
     if max == 0
       x.to_f / 2147483647.0
-    elsif max < 0x7fffffff
-      x / (0x7fffffff / max)
+    elsif max == 1
+      0
+    elsif x < max
+      x
     else
-      x * (max / 0x7fffffff)
+      x % max
     end
   end
   module_function :rand
@@ -552,12 +555,12 @@ module Kernel
 
   def methods(all=true)
     methods = singleton_methods(all)
-    methods |= self.metaclass.instance_methods(true) if all
+    methods |= Rubinius.object_metaclass(self).instance_methods(true) if all
 
     return methods if kind_of?(ImmediateValue)
 
     undefs = []
-    metaclass.method_table.filter_entries do |entry|
+    Rubinius.object_metaclass(self).method_table.filter_entries do |entry|
       undefs << entry.name.to_s if entry.visibility == :undef
     end
 
@@ -569,7 +572,7 @@ module Kernel
   end
 
   def private_singleton_methods
-    Rubinius.convert_to_names metaclass.method_table.private_names
+    Rubinius.convert_to_names Rubinius.object_metaclass(self).method_table.private_names
   end
 
   def protected_methods(all=true)
@@ -577,7 +580,7 @@ module Kernel
   end
 
   def protected_singleton_methods
-    Rubinius.convert_to_names metaclass.method_table.protected_names
+    Rubinius.convert_to_names Rubinius.object_metaclass(self).method_table.protected_names
   end
 
   def public_methods(all=true)
@@ -585,7 +588,7 @@ module Kernel
   end
 
   def singleton_methods(all=true)
-    mt = metaclass.method_table
+    mt = Rubinius.object_metaclass(self).method_table
     methods = (all ? mt.names : mt.public_names + mt.protected_names)
 
     Rubinius.convert_to_names methods
@@ -607,7 +610,7 @@ module Kernel
 
   def compile(path, out=nil, flags=nil)
     out = "#{path}c" unless out
-    cm = Rubinius::CompilerNG.compile_file_old(path, flags)
+    cm = Rubinius::Compiler.compile_file_old(path, flags)
     raise LoadError, "Unable to compile '#{path}'" unless cm
     Rubinius::CompiledFile.dump cm, out
     return out

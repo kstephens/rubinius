@@ -164,7 +164,7 @@ namespace rubinius {
 
       // Get the current time to be used if select is interrupted and we
       // have to recalculate the sleep time
-      assert(gettimeofday(&future, NULL) == 0);
+      gettimeofday(&future, NULL);
       timeradd(&future, &limit, &future);
     }
 
@@ -192,7 +192,7 @@ namespace rubinius {
         // Recalculate the limit and go again.
         if(maybe_limit) {
           struct timeval now;
-          assert(gettimeofday(&now, NULL) == 0);
+          gettimeofday(&now, NULL);
           timersub(&future, &now, &limit);
         }
 
@@ -744,6 +744,16 @@ failed: /* try next '*' position */
 
     if(!set) return Qnil;
     return Fixnum::from(new_fd);
+  }
+
+  void IO::set_nonblock(STATE) {
+    int flags = fcntl(descriptor_->to_native(), F_GETFL);
+    if(flags == -1) return;
+
+    if((flags & O_NONBLOCK) == 0) {
+      flags |= O_NONBLOCK;
+      fcntl(descriptor_->to_native(), F_SETFL, flags);
+    }
   }
 
 /* IOBuffer methods */

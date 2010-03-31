@@ -21,6 +21,7 @@
 .hgignore
 .libs
 .spec/bm.yml
+.depends.mf
 /rubinius_tasks.dot
 /nbproject
 CI-specs
@@ -64,6 +65,7 @@ tmtags
 /kernel/signature.rb
 
 /lib/compiler/opcodes.rb
+/lib/compiler/generator_methods.rb
 
 /lib/etc.rb
 /lib/kernel.rb

@@ -99,6 +99,7 @@ namespace rubinius {
     Value* out_args_block_;
     Value* out_args_total_;
     Value* out_args_arguments_;
+    Value* out_args_container_;
 
     int called_args_;
     int sends_done_;
@@ -120,6 +121,8 @@ namespace rubinius {
       out_args_block_= ptr_gep(out_args_, 1, "out_args_block");
       out_args_total_= ptr_gep(out_args_, 2, "out_args_total");
       out_args_arguments_ = ptr_gep(out_args_, 3, "out_args_arguments");
+      out_args_container_ = ptr_gep(out_args_, offset::args_container,
+                                    "out_args_container");
     }
 
     JITVisit(LLVMState* ls, JITMethodInfo& info, BlockMap& bm,
@@ -595,6 +598,8 @@ namespace rubinius {
       b().CreateStore(constant(Qnil), out_args_block_);
       b().CreateStore(ConstantInt::get(ls_->Int32Ty, args),
                     out_args_total_);
+      b().CreateStore(Constant::getNullValue(ptr_type("Tuple")),
+                      out_args_container_);
       if(args > 0) {
         b().CreateStore(stack_objects(args), out_args_arguments_);
       }
@@ -605,6 +610,8 @@ namespace rubinius {
       b().CreateStore(stack_top(), out_args_block_);
       b().CreateStore(ConstantInt::get(ls_->Int32Ty, args),
                     out_args_total_);
+      b().CreateStore(Constant::getNullValue(ptr_type("Tuple")),
+                      out_args_container_);
       if(args > 0) {
         b().CreateStore(stack_objects(args + 1), out_args_arguments_);
       }
@@ -1209,13 +1216,12 @@ namespace rubinius {
 
         sig << "VM";
         sig << "CallFrame";
-        sig << "Arguments";
         sig << ls_->Int32Ty;
         sig << ls_->IntPtrTy;
 
-        Value* call_args[] = { vm_, call_frame_, args_, cint(current_ip_), sp };
+        Value* call_args[] = { vm_, call_frame_, cint(current_ip_), sp };
 
-        Value* call = sig.call("rbx_continue_uncommon", call_args, 5, "", b());
+        Value* call = sig.call("rbx_continue_uncommon", call_args, 4, "", b());
 
         info().add_return_value(call, current_block());
         b().CreateBr(info().return_pad());
@@ -1678,24 +1684,41 @@ use_send:
     void visit_send_super_stack_with_block(opcode which, opcode args) {
       set_has_side_effects();
 
+      if(current_block_ >= 0) {
+        emit_create_block(current_block_);
+      }
+
       InlineCache* cache = reinterpret_cast<InlineCache*>(which);
       Value* ret = super_send(cache->name, args);
       stack_remove(args + 1);
       check_for_return(ret);
+
+      current_block_ = -1;
     }
 
     void visit_send_super_stack_with_splat(opcode which, opcode args) {
       set_has_side_effects();
+
+      if(current_block_ >= 0) {
+        emit_create_block(current_block_);
+      }
 
       InlineCache* cache = reinterpret_cast<InlineCache*>(which);
       Value* ret = super_send(cache->name, args, true);
       stack_remove(args + 2);
       check_for_exception(ret);
       stack_push(ret);
+
+      current_block_ = -1;
     }
 
     void visit_zsuper(opcode which) {
       set_has_side_effects();
+
+      if(current_block_ >= 0) {
+        emit_create_block(current_block_);
+      }
+
       InlineCache* cache = reinterpret_cast<InlineCache*>(which);
 
       Signature sig(ls_, ObjType);
@@ -1715,6 +1738,8 @@ use_send:
       Value* ret = sig.call("rbx_zsuper_send", call_args, 4, "super_send", b());
       check_for_exception(ret);
       stack_set_top(ret);
+
+      current_block_ = -1;
     }
 
     void visit_add_scope() {

@@ -81,7 +81,7 @@ module Kernel
       filename ||= "(eval)"
     end
 
-    cm = Rubinius::CompilerNG.compile_eval string, binding.variables, filename, lineno
+    cm = Rubinius::Compiler.compile_eval string, binding.variables, filename, lineno
     cm.scope = binding.static_scope.dup
     cm.name = :__eval__
 
@@ -136,13 +136,15 @@ module Kernel
   #   k.instance_eval { @secret }   #=> 99
 
   def instance_eval(string=nil, filename="(eval)", line=1, &prc)
+    mc = Rubinius.object_metaclass(self)
+
     if prc
       if string
         raise ArgumentError, 'cannot pass both a block and a string to evaluate'
       end
       # Return a copy of the BlockEnvironment with the receiver set to self
       env = prc.block
-      static_scope = env.method.scope.using_current_as(__metaclass__)
+      static_scope = env.method.scope.using_current_as(mc)
       return env.call_under(self, static_scope, self)
     elsif string
       string = StringValue(string)
@@ -152,8 +154,8 @@ module Kernel
                               Rubinius::CompiledMethod.of_sender,
                               Rubinius::StaticScope.of_sender)
 
-      cm = Rubinius::CompilerNG.compile_eval string, binding.variables, filename, line
-      cm.scope = binding.static_scope.using_current_as(metaclass)
+      cm = Rubinius::Compiler.compile_eval string, binding.variables, filename, line
+      cm.scope = binding.static_scope.using_current_as(mc)
       cm.name = :__instance_eval__
       cm.compile
 
@@ -192,7 +194,8 @@ module Kernel
   def instance_exec(*args, &prc)
     raise ArgumentError, "Missing block" unless block_given?
     env = prc.block
-    static_scope = Rubinius::StaticScope.of_sender.using_current_as(__metaclass__)
+    mc = Rubinius.object_metaclass(self)
+    static_scope = env.method.scope.using_current_as(mc)
     return env.call_under(self, static_scope, *args)
   end
 end
@@ -228,7 +231,7 @@ class Module
 
     string = StringValue(string)
 
-    cm = Rubinius::CompilerNG.compile_eval string, variables, filename, line
+    cm = Rubinius::Compiler.compile_eval string, variables, filename, line
 
     # The staticscope of a module_eval CM is the receiver of module_eval
     ss = Rubinius::StaticScope.new self, Rubinius::StaticScope.of_sender
