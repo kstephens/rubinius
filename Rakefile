@@ -153,7 +153,7 @@ end
 
 desc "Create Rubinus::SprintfCompiler"
 task :sprintf_compiler do
-  if ! File.exist(file = "kernel/common/sprintf_compiler.rb")
+  if ! File.exist?(file = "kernel/common/sprintf_compiler.rb")
     File.open(file, "w+") do | fh |
       fh.puts "module Rubinius"
       fh.puts File.read("../ruby_sprintf_compiler/lib/sprintf_compiler.rb")
