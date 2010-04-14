@@ -69,6 +69,13 @@ class Module
     class_variable_defined? verify_class_variable_name(name)
   end
 
+  def remove_class_variable(name)
+    Ruby.primitive :module_cvar_remove
+
+    remove_class_variable verify_class_variable_name(name)
+  end
+  private :remove_class_variable
+
   def __class_variables__
     Ruby.primitive :module_class_variables
 
@@ -327,8 +334,7 @@ class Module
       cm = Rubinius::DelegatedMethod.new(name, :call, meth, false)
     when Proc
       be = meth.block.dup
-      meth = be.method.dup
-      meth.name = name.to_sym
+      meth = be.method.change_name name.to_sym
       be.method = meth
       cm = Rubinius::BlockEnvironment::AsMethod.new(be)
     when Method
@@ -339,14 +345,26 @@ class Module
       raise TypeError, "wrong argument type #{meth.class} (expected Proc/Method)"
     end
 
-    method_added(name)
-
     @method_table.store name.to_sym, cm, :public
     Rubinius::VM.reset_method_cache(name.to_sym)
+
+    method_added(name)
+
     meth
   end
 
   private :define_method
+
+  def thunk_method(name, value)
+    thunk = Rubinius::Thunk.new(value)
+
+    @method_table.store name.to_sym, thunk, :public
+    Rubinius::VM.reset_method_cache(name.to_sym)
+
+    method_added(name)
+
+    name
+  end
 
   def extend_object(obj)
     append_features Rubinius.object_metaclass(obj)
@@ -590,9 +608,12 @@ class Module
   # Install a new Autoload object into the constants table
   # See kernel/common/autoload.rb
   def autoload(name, path)
-    name = normalize_const_name(name)
     raise TypeError, "autoload filename must be a String" unless path.kind_of? String
     raise ArgumentError, "empty file name" if path.empty?
+
+    return if Requirer::Utils.provided?(path)
+
+    name = normalize_const_name(name)
 
     if existing = constant_table[name]
       if existing.kind_of? Autoload

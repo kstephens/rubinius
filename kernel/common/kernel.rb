@@ -5,6 +5,14 @@ module Kernel
     # unless where are called from a DelegatedMethod
     # For the later, we check to see if the next location
     # was a call from a delegated method
+    easy_name =  Rubinius::VariableScope.of_sender.method.name
+
+    # A toplevel block.
+    return nil if easy_name == :__block__
+
+    # __eval__ is weird, use the complicated logic.
+    return easy_name unless easy_name == :__eval__
+
     scope_of_sender = Rubinius::StaticScope.of_sender
     trace = Rubinius::VM.backtrace(1)
     trace.each_with_index do |loc, i|
@@ -140,20 +148,12 @@ module Kernel
   module_function :warning
 
   def exit(code=0)
-    if code.equal? true
-      code = 0
-    elsif code.equal? false
-      code = 1
-    else
-      code = Type.coerce_to code, Integer, :to_int
-    end
-
-    raise SystemExit.new(code)
+    Process.exit(code)
   end
   module_function :exit
 
-  def exit!(code=0)
-    Process.exit(code)
+  def exit!(code=1)
+    Process.exit!(code)
   end
   module_function :exit!
 
@@ -231,9 +231,10 @@ module Kernel
 
   @current_seed = 0
 
-  def self.srand(seed=0)
+  def self.srand(seed=undefined)
     cur = @current_srand
-    if seed == 0
+
+    if seed.equal? undefined
       begin
         File.open("/dev/urandom", "r") do |f|
           seed = f.read(10).unpack("I*")[0]
@@ -241,15 +242,19 @@ module Kernel
       rescue Errno::ENOENT, Errno::EPERM, Errno::EACCES
         seed = Time.now.to_i
       end
+    else
+      seed = Type.coerce_to(seed, Integer, :to_int)
     end
-    FFI::Platform::POSIX.srand(seed.to_i)
-    @current_srand = seed.to_i
+
+    FFI::Platform::POSIX.srand(seed)
+    @current_srand = seed
+
     cur
   end
 
   # Redispatch to Kernel so we can store @current_srand as an ivar
   # on Kernel without an accessor.
-  def srand(seed=0)
+  def srand(seed=undefined)
     Kernel.srand(seed)
   end
 
@@ -271,11 +276,6 @@ module Kernel
     end
   end
   module_function :rand
-
-  def endian?(order)
-    order == Rubinius::ENDIAN
-  end
-  module_function :endian?
 
   def block_given?
     return Rubinius::VariableScope.of_sender.block != nil

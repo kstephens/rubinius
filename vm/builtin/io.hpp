@@ -43,7 +43,7 @@ namespace rubinius {
     void unsafe_set_descriptor(native_int fd);
     void force_read_only(STATE);
     void force_write_only(STATE);
-    void finalize(STATE);
+    static void finalize(STATE, IO* io);
 
   /* Class primitives */
 
@@ -82,6 +82,9 @@ namespace rubinius {
 
     // Ruby.primitive :io_read_if_available
     Object* read_if_available(STATE, Fixnum* number_of_bytes);
+
+    // Ruby.primitive :io_socket_read
+    Object* socket_read(STATE, Fixnum* bytes, Fixnum* flags, Fixnum* type, CallFrame* calling_environment);
 
     // Ruby.primitive :io_seek
     Integer* seek(STATE, Integer* amount, Fixnum* whence);
@@ -123,7 +126,7 @@ namespace rubinius {
 
   };
 
-#define IOBUFFER_SIZE 32384U
+#define IOBUFFER_SIZE 1024U
 
   class IOBuffer : public Object {
   public:

@@ -38,7 +38,8 @@ extern "C" {
     NativeMethodEnvironment* env = NativeMethodEnvironment::get();
     Class* class_object = c_as<Class>(env->get_object(class_handle));
 
-    return ::strdup(class_object->name()->c_str(env->state()));
+    String* str = class_object->name()->to_str(env->state());
+    return RSTRING_PTR(env->get_handle(str));
   }
 
   VALUE rb_path2class(const char* name) {
@@ -58,12 +59,10 @@ extern "C" {
 
     if (((Symbol *)name)->is_cvar_p(env->state())->true_p()) {
        return rb_funcall(module_handle, rb_intern("class_variable_defined?"),
-                         1,
-                         env->get_handle(prefixed_by("@@", name)));
+                         1, name);
      } else {
       return rb_funcall(module_handle, rb_intern("instance_variable_defined?"),
-                        1,
-                        env->get_handle(prefixed_by("@", name)));
+                        1, name);
      }
   }
 
@@ -72,7 +71,7 @@ extern "C" {
 
     return rb_funcall(module_handle, rb_intern("class_variable_get"),
                       1,
-                      env->get_handle(prefixed_by("@@", name)));
+                      env->get_handle(prefixed_by(env->state(), "@@", 2, name)));
   }
 
   VALUE rb_cvar_set(VALUE module_handle, ID name, VALUE value, int unused) {
@@ -80,7 +79,7 @@ extern "C" {
 
     return rb_funcall(module_handle, rb_intern("class_variable_set"),
                       2,
-                      env->get_handle(prefixed_by("@@", name)),
+                      env->get_handle(prefixed_by(env->state(), "@@", 2, name)),
                       value);
   }
 

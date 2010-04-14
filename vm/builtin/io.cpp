@@ -5,6 +5,9 @@
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <sys/time.h>
+#include <sys/types.h>
+#include <netdb.h>
+#include <sys/un.h>
 
 #include "builtin/io.hpp"
 #include "builtin/bytearray.hpp"
@@ -43,7 +46,7 @@ namespace rubinius {
 
     // Don't bother to add finalization for stdio
     if(fd >= 3) {
-      state->om->needs_finalization(io);
+      state->om->needs_finalization(io, (FinalizerFunction)&IO::finalize);
     }
 
     return io;
@@ -60,7 +63,7 @@ namespace rubinius {
     // Ensure the instance's class is set (i.e. for subclasses of IO)
     io->klass(state, as<Class>(self));
 
-    state->om->needs_finalization(io);
+    state->om->needs_finalization(io, (FinalizerFunction)&IO::finalize);
 
     return io;
   }
@@ -175,6 +178,8 @@ namespace rubinius {
     /* And the main event, pun intended */
     retry:
     state->install_waiter(waiter);
+    state->thread->sleep(state, Qtrue);
+
     {
       GlobalLock::UnlockGuard lock(state->global_lock());
 
@@ -183,6 +188,8 @@ namespace rubinius {
                                                   maybe_error_set,
                                                   maybe_limit);
     }
+
+    state->thread->sleep(state, Qfalse);
     state->clear_waiter();
 
     if(events == -1) {
@@ -385,15 +392,15 @@ namespace rubinius {
     mode(state, Fixnum::from((m & ~O_ACCMODE) | O_WRONLY));
   }
 
-  void IO::finalize(STATE) {
-    if(descriptor_->nil_p()) return;
+  void IO::finalize(STATE, IO* io) {
+    if(io->descriptor()->nil_p()) return;
 
-    native_int fd = descriptor_->to_native();
+    native_int fd = io->descriptor()->to_native();
 
     // don't close stdin, stdout, stderr (0, 1, 2)
     if(fd >= 3) {
       ::close(fd);
-      descriptor(state, Fixnum::from(-1));
+      io->descriptor(state, Fixnum::from(-1));
     }
   }
 
@@ -410,18 +417,20 @@ namespace rubinius {
 
   retry:
     state->install_waiter(waiter);
+    state->thread->sleep(state, Qtrue);
 
     {
       GlobalLock::UnlockGuard lock(state->global_lock());
       bytes_read = ::read(fd, buffer->byte_address(), count);
     }
 
+    state->thread->sleep(state, Qfalse);
     state->clear_waiter();
 
     buffer->unpin();
 
     if(bytes_read == -1) {
-      if(errno == EAGAIN || errno == EINTR) {
+      if(errno == EINTR) {
         if(state->check_async(calling_environment)) goto retry;
       } else {
         Exception::errno_error(state, "read(2) failed");
@@ -504,6 +513,144 @@ namespace rubinius {
     str->num_bytes(state, Fixnum::from(cnt));
 
     return str;
+  }
+
+  Array* ipaddr(STATE, struct sockaddr* addr, socklen_t len) {
+    String* family;
+    char buf[NI_MAXHOST];
+    char pbuf[NI_MAXSERV];
+
+    switch(addr->sa_family) {
+    case AF_UNSPEC:
+      family = String::create(state, "AF_UNSPEC");
+      break;
+    case AF_INET:
+      family = String::create(state, "AF_INET");
+      break;
+#ifdef INET6
+    case AF_INET6:
+      family = String::create(state, "AF_INET6");
+      break;
+#endif
+#ifdef AF_LOCAL
+    case AF_LOCAL:
+      family = String::create(state, "AF_LOCAL");
+      break;
+#elif  AF_UNIX
+    case AF_UNIX:
+      family = String::create(state, "AF_UNIX");
+      break;
+#endif
+    default:
+      sprintf(pbuf, "unknown:%d", addr->sa_family);
+      family = String::create(state, pbuf);
+      break;
+    }
+
+    int e = getnameinfo(addr, len, buf, NI_MAXHOST, pbuf, NI_MAXSERV,
+                        NI_NUMERICHOST | NI_NUMERICSERV);
+
+    // TODO this doesn't support doing the DNS bound lookup at all.
+    //      Not doing it better than doing it badly, thats why it's
+    //      not here.
+    //
+    String* host;
+    if(e) {
+      host = String::create(state, (char*)addr, len);
+    } else {
+      host = String::create(state, buf);
+    }
+
+    Array* ary = Array::create(state, 4);
+    ary->set(state, 0, family);
+    ary->set(state, 1, Fixnum::from(atoi(pbuf)));
+    ary->set(state, 2, host);
+    ary->set(state, 3, host);
+
+    return ary;
+  }
+
+  static const char* unixpath(struct sockaddr_un *sockaddr, socklen_t len) {
+    if (sockaddr->sun_path < (char*)sockaddr + len) {
+      return sockaddr->sun_path;
+    }
+    return "";
+  }
+
+  Array* unixaddr(STATE, struct sockaddr_un* addr, socklen_t len) {
+    Array* ary = Array::create(state, 2);
+    ary->set(state, 0, String::create(state, "AF_UNIX"));
+    ary->set(state, 1, String::create(state, unixpath(addr, len)));
+    return ary;
+  }
+
+  Object* IO::socket_read(STATE, Fixnum* bytes, Fixnum* flags, Fixnum* type,
+                          CallFrame* calling_environment) {
+    char buf[1024];
+    socklen_t alen = sizeof(buf);
+    size_t size = (size_t)bytes->to_native();
+
+    String* buffer = String::create_pinned(state, bytes);
+
+    OnStack<1> variables(state, buffer);
+
+    ssize_t bytes_read;
+    native_int t = type->to_native();
+
+    WaitingForSignal waiter;
+
+  retry:
+    state->install_waiter(waiter);
+    state->thread->sleep(state, Qtrue);
+
+    {
+      GlobalLock::UnlockGuard lock(state->global_lock());
+      bytes_read = recvfrom(descriptor()->to_native(),
+                            buffer->byte_address(), size,
+                            flags->to_native(),
+                            (struct sockaddr*)buf, &alen);
+    }
+
+    state->thread->sleep(state, Qfalse);
+    state->clear_waiter();
+
+    buffer->unpin();
+
+    if(bytes_read == -1) {
+      if(errno == EINTR) {
+        if(state->check_async(calling_environment)) goto retry;
+      } else {
+        Exception::errno_error(state, "read(2) failed");
+      }
+
+      return NULL;
+    }
+
+    buffer->num_bytes(state, Fixnum::from(bytes_read));
+
+    if(t == 0) return buffer; // none
+
+    Array* ary = Array::create(state, 2);
+    ary->set(state, 0, buffer);
+
+    switch(type->to_native()) {
+    case 1: // ip
+      // Hack from MRI:
+      // OSX doesn't return a 'from' result from recvfrom for connection-oriented sockets
+      if(alen && alen != sizeof(buf)) {
+        ary->set(state, 1, ipaddr(state, (struct sockaddr*)buf, alen));
+      } else {
+        ary->set(state, 1, Qnil);
+      }
+      break;
+    case 2: // unix
+      ary->set(state, 1, unixaddr(state, (struct sockaddr_un*)buf, alen));
+      break;
+    default:
+      ary->set(state, 1, String::create(state, buf, alen));
+    }
+
+    return ary;
   }
 
   Object* IO::query(STATE, Symbol* op) {
@@ -723,6 +870,7 @@ failed: /* try next '*' position */
 
   retry:
     state->install_waiter(waiter);
+    state->thread->sleep(state, Qtrue);
 
     {
       GlobalLock::UnlockGuard lock(state->global_lock());
@@ -730,6 +878,7 @@ failed: /* try next '*' position */
       set = true;
     }
 
+    state->thread->sleep(state, Qfalse);
     state->clear_waiter();
 
     if(new_fd == -1) {
@@ -793,20 +942,26 @@ failed: /* try next '*' position */
   Object* IOBuffer::fill(STATE, IO* io, CallFrame* calling_environment) {
     ssize_t bytes_read;
     WaitingForSignal waiter;
+    native_int fd = io->descriptor()->to_native();
 
     IOBuffer* self = this;
     OnStack<1> os(state, self);
 
+    char temp_buffer[512];
+    size_t count = 512;
+
+    if(self->left() < count) count = self->left();
+
   retry:
     state->install_waiter(waiter);
+    state->thread->sleep(state, Qtrue);
 
     {
       GlobalLock::UnlockGuard lock(state->global_lock());
-      bytes_read = read(io->descriptor()->to_native(),
-                        self->at_unused(),
-                        self->left());
+      bytes_read = read(fd, temp_buffer, count);
     }
 
+    state->thread->sleep(state, Qfalse);
     state->clear_waiter();
 
     if(bytes_read == -1) {
@@ -820,6 +975,7 @@ failed: /* try next '*' position */
     }
 
     if(bytes_read > 0) {
+      memcpy(self->at_unused(), temp_buffer, bytes_read);
       self->read_bytes(state, bytes_read);
     }
 

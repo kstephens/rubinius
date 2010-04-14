@@ -273,7 +273,7 @@ namespace rubinius {
     if(!ent) return Qnil;
 
     if(ent->is_number()) {
-      return Fixnum::from(atoi(ent->value.c_str()));
+      return Bignum::from_string(state, ent->value.c_str(), 10);
     } else if(ent->is_true()) {
       return Qtrue;
     }
@@ -760,5 +760,63 @@ namespace rubinius {
     }
 
     return res;
+  }
+
+  Object* System::vm_check_callable(STATE, Object* obj, Symbol* sym, Object* self) {
+    Module* mod = obj->lookup_begin(state);
+
+    MethodTableBucket* entry;
+    bool skip_vis_check = false;
+
+    while(!mod->nil_p()) {
+      entry = mod->method_table()->find_entry(state, sym);
+
+      if(entry) {
+        if(entry->undef_p(state)) return Qfalse;
+        if(!skip_vis_check) {
+          if(entry->private_p(state)) return Qfalse;
+          if(entry->protected_p(state)) {
+            if(!self->kind_of_p(state, mod)) return Qfalse;
+          }
+        }
+
+        // It's callable, ok, but see if we should see if it's just a stub
+        // to change the visibility of another method.
+        if(entry->method()->nil_p()) {
+          skip_vis_check = true;
+        } else {
+          return Qtrue;
+        }
+      }
+
+      mod = mod->superclass();
+    }
+
+    return Qfalse;
+  }
+
+  Object* System::vm_check_super_callable(STATE, CallFrame* call_frame) {
+    Module* mod = call_frame->module()->superclass();
+
+    MethodTableBucket* entry;
+    Symbol* sym = call_frame->original_name();
+
+    while(!mod->nil_p()) {
+      entry = mod->method_table()->find_entry(state, sym);
+
+      if(entry) {
+        if(entry->undef_p(state)) return Qfalse;
+
+        // It's callable, ok, but see if we should see if it's just a stub
+        // to change the visibility of another method.
+        if(!entry->method()->nil_p()) {
+          return Qtrue;
+        }
+      }
+
+      mod = mod->superclass();
+    }
+
+    return Qfalse;
   }
 }

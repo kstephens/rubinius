@@ -71,8 +71,9 @@ module Process
 
   def self.kill(sig, pid)
     use_process_group = false
+    sig = sig.to_s if sig.kind_of?(Symbol)
     if sig.kind_of?(String)
-      if sig[0] == 45
+      if sig[0] == ?-
         sig = sig[1..-1]
         use_process_group = true
       end
@@ -101,9 +102,6 @@ module Process
   def self.abort(msg=nil)
     $stderr.puts(msg) if(msg)
     exit 1
-  end
-  def self.exit!(code=0)
-    exit(code)
   end
 
   def self.getpgid(pid)

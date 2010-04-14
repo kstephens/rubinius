@@ -35,6 +35,8 @@ namespace rubinius {
     /** New Data instance. */
     static Data*  create(STATE, void* data, MarkFunctor mark, FreeFunctor free);
 
+    static void finalize(STATE, Data* data);
+
     RDataExposed* exposed() {
       return &exposed_;
     }

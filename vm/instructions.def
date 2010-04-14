@@ -304,6 +304,13 @@ instruction dup_top() [ -- value ]
   stack_push(t1);
 end
 
+instruction dup_many(count) [ +count -- ++count ]
+  Object** objs = stack_back_position(count);
+  for(intptr_t i = 0; i < count; i++) {
+    stack_push(objs[i]);
+  }
+end
+
 # [Operation]
 #   Pop an item off the stack and discard
 # [Format]
@@ -321,6 +328,12 @@ end
 
 instruction pop() [ value -- ]
   stack_pop();
+end
+
+instruction pop_many(count) [ +count -- ]
+  for(intptr_t i = 0; i < count; i++) {
+    stack_pop();
+  }
 end
 
 # [Operation]
@@ -342,6 +355,11 @@ instruction rotate(count) [ -- ]
   int diff = count >> 1;
   Object** start = STACK_PTR - (count - 1);
   Object** end = STACK_PTR;
+
+  if(start < call_frame->stk) {
+    Exception::internal_error(state, call_frame, "stack underflow in rotate");
+    RUN_EXCEPTION();
+  }
 
   for(int i = 0; i < diff; i++) {
     Object* right = *end;
@@ -374,6 +392,11 @@ end
 #  +positions+, with all items above that position shuffling up by one.
 
 instruction move_down(positions) [ -- ]
+  if(stack_calculate_sp() < positions) {
+    Exception::internal_error(state, call_frame, "stack underflow in move_down");
+    RUN_EXCEPTION();
+  }
+
   Object* val = stack_top();
   for(int i = 0; i < positions; i++) {
     int target = -i;

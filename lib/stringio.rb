@@ -53,17 +53,13 @@ class StringIO
     self
   end
 
-  def chars
-    to_enum :each_char
-  end
-
   def each_byte
     return to_enum :each_byte unless block_given?
     raise IOError, "not opened for reading" unless @readable
     if @pos < @string.length
       @string[@pos..-1].each_byte { |b| @pos += 1; yield b}
     end
-    nil
+    self
   end
 
   alias_method :bytes, :each_byte
@@ -95,8 +91,10 @@ class StringIO
     self
   end
 
+  alias_method :chars, :each_char
+
   def each(sep = $/)
-    return to_enum :each_byte, sep unless block_given?
+    return to_enum :each, sep unless block_given?
     raise IOError, "not opened for reading" unless @readable
     sep = StringValue(sep) unless sep.nil?
     while line = getline(sep)
@@ -105,6 +103,7 @@ class StringIO
     self
   end
   alias_method :each_line, :each
+  alias_method :lines, :each
 
   def <<(str)
     write(str)

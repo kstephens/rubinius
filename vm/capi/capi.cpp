@@ -211,15 +211,32 @@ namespace rubinius {
         name.assign(str.str());
       }
 
-      /* @todo Need to strdup here to not point to junk but can it leak? */
-      return env->state()->symbol(strdup(name.c_str()));
+      return env->state()->symbol(name.c_str());
     }
 
     /** Make sure the name has the given prefix. */
-    Symbol* prefixed_by(std::string prefix, ID name) {
-      NativeMethodEnvironment* env = NativeMethodEnvironment::get();
+    Symbol* prefixed_by(STATE, const char* prefix, size_t len, ID name) {
+      Symbol* sym_obj = reinterpret_cast<Symbol*>(name);
+      std::string& sym = state->shared.symbols.lookup_cppstring(sym_obj);
 
-      return prefixed_by(prefix, reinterpret_cast<Symbol*>(name)->c_str(env->state()));
+      if(sym.compare(0UL, len, prefix) == 0) return sym_obj;
+
+      std::ostringstream stream;
+      stream << prefix << sym;
+
+      return state->symbol(stream.str().c_str());
+    }
+
+    Symbol* prefixed_by(STATE, const char prefix, ID name) {
+      Symbol* sym_obj = reinterpret_cast<Symbol*>(name);
+      std::string& sym = state->shared.symbols.lookup_cppstring(sym_obj);
+
+      if(sym.c_str()[0] == prefix) return sym_obj;
+
+      std::ostringstream stream;
+      stream << prefix << sym;
+
+      return state->symbol(stream.str().c_str());
     }
 
     void capi_raise_runtime_error(const char* reason) {

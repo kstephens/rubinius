@@ -11,10 +11,13 @@ namespace rubinius {
 
     void* pointer;
     bool autorelease;
+    bool set_finalizer;
 
     static void init(STATE);
 
     static MemoryPointer* create(STATE, void* ptr);
+
+    static void finalize(STATE, MemoryPointer* ptr);
 
     // Ruby.primitive :memorypointer_address
     Integer* get_address(STATE);
@@ -89,7 +92,6 @@ namespace rubinius {
     // Ruby.primitive :memorypointer_network_order
     Object* network_order(STATE, Fixnum* offset, Fixnum* intsize);
 
-    /** @todo Need cleanup here? */
     class Info : public TypeInfo {
     public:
       Info(object_type type, bool cleanup = false) : TypeInfo(type, cleanup) { }

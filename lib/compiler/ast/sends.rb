@@ -66,12 +66,14 @@ module Rubinius
         @receiver.value_defined(g, f)
 
         g.push_literal @name
-        if @receiver.kind_of? Self
+
+        if @vcall_style
           g.push :true
+          g.send :__respond_to_eh__, 2
         else
-          g.push :false
+          g.push_self
+          g.invoke_primitive :vm_check_callable, 3
         end
-        g.send :__respond_to_eh__, 2
         g.gif f
         g.push_literal "method"
         g.goto done
@@ -653,6 +655,7 @@ module Rubinius
       def initialize(line, arguments)
         @line = line
         @block = nil
+        @name = nil
         @arguments = ActualArguments.new line, arguments
       end
 
@@ -684,8 +687,7 @@ module Rubinius
         nope = g.new_label
         done = g.new_label
 
-        g.push_variables
-        g.send :super_method_defined?, 0
+        g.invoke_primitive :vm_check_super_callable, 0
 
         g.gif nope
 

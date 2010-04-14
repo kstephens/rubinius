@@ -57,7 +57,8 @@ describe "Config::CONFIG" do
     "datadir",
     "rubyhdrdir",
     "wordsize",
-    "arch"
+    "arch",
+    "bindir"
   ]
 
   it_has_keys 'Config::CONFIG', keys
@@ -72,13 +73,12 @@ describe "Config::CONFIG" do
 end
 
 describe "Config::MAKEFILE_CONFIG" do
-  sitedir    = "#{Rubinius::LIB_PATH}/rubinius"
-  sitelibdir = "#{sitedir}/#{Rubinius::LIB_VERSION}"
+  sitedir    = Rubinius::SITE_PATH
+  sitelibdir = Rubinius::SITE_PATH
   arch       = "#{Rubinius::CPU}-#{Rubinius::OS}"
 
   entries = {
     "exec_prefix"        => "$(prefix)",
-    "bindir"             => "$(exec_prefix)/bin",
     "sbindir"            => "$(exec_prefix)/sbin",
     "libexecdir"         => "$(exec_prefix)/libexec",
     "datarootdir"        => "$(prefix)/share",

@@ -15,6 +15,10 @@ class Array::Packer
     @ptr = nil
   end
 
+  def endian?(order)
+    order == Rubinius::ENDIAN
+  end
+
   def ptr
     @ptr ||= FFI::MemoryPointer.new(16) # enough for all uses
   end
@@ -93,7 +97,7 @@ class Array::Packer
       when ?w
         ber_compress(kind, len)
       when ?u
-        @result << encode(kind, len, :uuencode).join.gsub(/ /, '`')
+        @result << uuencode(kind, len).join.gsub(/ /, '`')
       when ?d, ?D, ?e, ?E, ?f, ?F, ?g, ?G
         decimal(kind, len)
       when ?i, ?I, ?s, ?S, ?l, ?L, ?v, ?V
@@ -383,7 +387,7 @@ class Array::Packer
   end
 
   # u
-  def encode(kind, size, type = :base64)
+  def uuencode(kind, size)
     item = StringValue(fetch_item())
 
     line_length = 45
@@ -403,19 +407,11 @@ class Array::Packer
                ((a << 4) | ((b >> 4) & 017)) & 077,
                ((b << 2) | ((c >> 6) & 003)) & 077,
                ( c                         ) & 077]
-        if(type == :uuencode)
-          arr.map {|x| (?\s+x).chr }
-        else
-          arr.map {|x| BASE_64_B2A[x] }
-        end
+        arr.map {|x| (?\s+x).chr }
       }.flatten
 
       l = "#{encoded.join}\n"
-      if(type == :uuencode)
-        (line.size + ?\s).chr + l
-      else
-        l
-      end
+      (line.size + ?\s).chr + l
     }
   end
 
@@ -467,6 +463,10 @@ class String::Unpacker
     @source = source
     @length = source.length
     @schema = schema
+  end
+
+  def endian?(order)
+    order == Rubinius::ENDIAN
   end
 
   def ptr
@@ -961,7 +961,9 @@ class String::Unpacker
       end
     end
 
-    @ptr.free if @ptr
     elements
+
+  ensure
+    @ptr.free if @ptr
   end
 end

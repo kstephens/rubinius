@@ -159,7 +159,7 @@ namespace rubinius {
   void Environment::start_signals() {
     struct sigaction action;
     action.sa_handler = null_func;
-    action.sa_flags = SA_RESTART;
+    action.sa_flags = 0;
     sigfillset(&action.sa_mask);
     sigaction(NativeThread::cWakeupSignal, &action, NULL);
 
@@ -302,7 +302,7 @@ namespace rubinius {
     cf->execute(state);
 
     if(state->thread_state()->raise_reason() == cException) {
-      Exception* exc = as<Exception>(state->thread_state()->raise_value());
+      Exception* exc = as<Exception>(state->thread_state()->current_exception());
       std::ostringstream msg;
 
       msg << "exception detected at toplevel: ";

@@ -117,10 +117,10 @@ namespace rubinius {
     TypeInfo* wanted = state->find_type(type);
 
     if(!object->reference_p()) {
-      msg << "  Tried to use non-reference value " << object;
+      msg << "Tried to use non-reference value " << object;
     } else {
       TypeInfo* was = state->find_type(object->type_id());
-      msg << "  Tried to use object of type " <<
+      msg << "Tried to use object of type " <<
         was->type_name << " (" << was->type << ")";
     }
 
@@ -221,7 +221,7 @@ namespace rubinius {
     return make_errno_exception(state, exc_class, reason);
   }
 
-  void Exception::errno_error(STATE, const char* reason, int ern) {
+  void Exception::errno_error(STATE, const char* reason, int ern, const char* entity) {
     Exception* exc;
 
     if(ern == 0) ern = errno;
@@ -231,10 +231,20 @@ namespace rubinius {
       std::ostringstream msg;
       msg << "Unknown errno ";
       if(reason) msg << ": " << reason;
+      if(entity) msg << " - " << entity;
       exc = make_exception(state, get_system_call_error(state), msg.str().c_str());
     } else {
-      String* msg = reason ? String::create(state, reason) : (String*)Qnil;
-      exc = make_errno_exception(state, exc_class, msg);
+      String* message = (String*)Qnil;
+
+      if(reason) {
+        std::ostringstream msg;
+        msg << reason;
+        if(entity) msg << " - " << entity;
+
+        message = String::create(state, msg.str().c_str());
+      }
+
+      exc = make_errno_exception(state, exc_class, message);
     }
 
     RubyException::raise(exc);

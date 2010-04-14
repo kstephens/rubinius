@@ -82,7 +82,7 @@ namespace rubinius {
   }
 
   Object* Object::copy_object_prim(STATE, Object* other, CallFrame* call_frame) {
-    if(type_id() != other->type_id() ||
+    if(!reference_p() || !other->reference_p() || type_id() != other->type_id() ||
         class_object(state) != other->class_object(state)) {
       Exception* exc =
         Exception::make_type_error(state, type_id(), other);
@@ -237,11 +237,15 @@ namespace rubinius {
     return get_table_ivar(state, sym);
   }
 
-  Object* Object::ivar_defined(STATE, Symbol* sym) {
+  Object* Object::ivar_defined_prim(STATE, Symbol* sym) {
     if(!sym->is_ivar_p(state)->true_p()) {
       return reinterpret_cast<Object*>(kPrimitiveFailed);
     }
 
+    return ivar_defined(state, sym);
+  }
+
+  Object* Object::ivar_defined(STATE, Symbol* sym) {
     /* Implements the external ivars table for objects that don't
        have their own space for ivars. */
     if(!reference_p()) {
@@ -375,7 +379,7 @@ namespace rubinius {
       if(id->nil_p()) {
         /* All references have an even object_id. last_object_id starts out at 0
          * but we don't want to use 0 as an object_id, so we just add before using */
-        id = Fixnum::from(state->om->last_object_id += 2);
+        id = Fixnum::from(++state->om->last_object_id << 1);
         set_ivar(state, G(sym_object_id), id);
       }
 

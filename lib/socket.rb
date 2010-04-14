@@ -84,37 +84,13 @@ class BasicSocket < IO
   end
 
   def recvfrom(bytes_to_read, flags = 0)
-    bytes_to_read = Type.coerce_to bytes_to_read, Fixnum, :to_int
-    message = nil
-
-    FFI::MemoryPointer.new(:char, bytes_to_read + 1) do |buffer_p|
-      FFI::MemoryPointer.new :char, 128 do |sockaddr_storage_p|
-        FFI::MemoryPointer.new :socklen_t do |len_p|
-          len_p.write_int 128
-          bytes_read = Socket::Foreign.recvfrom(descriptor, buffer_p,
-                                                bytes_to_read, flags,
-                                                sockaddr_storage_p, len_p)
-          Errno.handle 'recvfrom(2)' if bytes_read < 0
-
-          message = buffer_p.read_string
-        end
-      end
-    end
-
-    message
+    # FIXME 0 is knowledge from io.cpp
+    return socket_recv(bytes_to_read, flags, 0)
   end
 
   def recv(bytes_to_read, flags = 0)
-    bytes_to_read = Type.coerce_to bytes_to_read, Fixnum, :to_int
-    buffer = FFI::MemoryPointer.new :char, bytes_to_read + 1
-
-    bytes_read = Socket::Foreign.recv(descriptor, buffer, bytes_to_read, flags)
-
-    Errno.handle 'recv(2)' if bytes_read < 0
-
-    message = buffer.read_string(bytes_read)
-    buffer.free
-    return message
+    # FIXME 0 is knowledge from io.cpp
+    return socket_recv(bytes_to_read, flags, 0)
   end
 
   #
@@ -152,10 +128,6 @@ class BasicSocket < IO
 #    shutdown Socket::SHUT_WR
 #  end
 
-  def shutdown how
-    close
-  end
-
 end
 
 class Socket < BasicSocket
@@ -164,7 +136,16 @@ class Socket < BasicSocket
   module Constants
     all_valid = FFI.config_hash("socket").reject {|name, value| value.empty? }
 
-    all_valid.each {|name, value| const_set name, value.to_i }
+    all_valid.each {|name, value| const_set name, Integer(value) }
+
+    # MRI compat. socket is a pretty screwed up API. All the constants in Constants
+    # must also be directly accessible on Socket itself. This means it's not enough
+    # to include Constants into Socket, because Socket#const_defined? must be able
+    # to see constants like AF_INET6 directly on Socket, but #const_defined? doesn't
+    # check inherited constants. O_o
+    #
+    all_valid.each {|name, value| Socket.const_set name, Integer(value) }
+
 
     afamilies = all_valid.select { |name,| name =~ /^AF_/ }
     afamilies.map! {|name, value| [value.to_i, name] }
@@ -481,7 +462,6 @@ class Socket < BasicSocket
   end
 
   include Socket::ListenAndAccept
-  include Socket::Constants
 
   class SockAddr_In < FFI::Struct
     config("rbx.platform.sockaddr_in", :sin_family, :sin_port, :sin_addr, :sin_zero)
@@ -698,8 +678,9 @@ class UNIXSocket < BasicSocket
   attr_accessor :path
 
   # Coding to the lowest standard here.
-  def recvfrom(bytes_to_read, flags = 0)
-    [super, ["AF_UNIX", ""]]
+  def recvfrom(bytes_read, flags = 0)
+    # FIXME 2 is hardcoded knowledge from io.cpp
+    socket_recv(bytes_read, flags, 2)
   end
 
   def initialize(path)
@@ -794,35 +775,8 @@ class IPSocket < BasicSocket
   end
 
   def recvfrom(maxlen, flags = 0)
-    maxlen = Type.coerce_to maxlen, Fixnum, :to_int
-    mesg = nil
-    sender_sockaddr = nil
-
-    FFI::MemoryPointer.new(:char, maxlen + 1) do |buffer_p|
-      FFI::MemoryPointer.new :char, 128 do |sockaddr_storage_p|
-        FFI::MemoryPointer.new :socklen_t do |len_p|
-          len_p.write_int 128
-          bytes_read = Socket::Foreign.recvfrom(descriptor, buffer_p, maxlen,
-            flags, sockaddr_storage_p, len_p)
-          Errno.handle 'recvfrom(2)' if bytes_read < 0
-
-          mesg = buffer_p.read_string
-          sockaddr = sockaddr_storage_p.read_string(len_p.read_int)
-
-          sockaddr_in = Socket::SockAddr_In.new(sockaddr)
-
-          # @todo *sigh* --rue
-          if sockaddr_in[:sin_family] == Socket::Constants::AF_UNSPEC
-            sockaddr_in[:sin_family] = Socket::Constants::AF_INET
-          end
-
-					sockaddr = Socket::Foreign.unpack_sockaddr_in(sockaddr_in.to_s, false)
-          sender_sockaddr = [ "AF_INET", sockaddr[2], sockaddr[0], sockaddr[1] ]
-        end
-      end
-    end
-
-    return [mesg, sender_sockaddr]
+    # FIXME 1 is hardcoded knowledge from io.cpp
+    socket_recv maxlen, flags, 1
   end
 
   def recvfrom_nonblock(maxlen, flags = 0)
