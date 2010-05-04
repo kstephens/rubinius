@@ -92,6 +92,11 @@ class Module
 
   alias_method :__name__, :name
 
+  def __path__
+    return @module_name if @module_name
+    inspect
+  end
+
   def to_s
     @module_name ? @module_name.to_s : super
   end
@@ -290,41 +295,49 @@ class Module
   end
 
   def instance_methods(all=true)
-    methods = filter_methods(:public_names, all) |
-              filter_methods(:protected_names, all)
+    methods = filter_methods(:public, all) |
+              filter_methods(:protected, all)
 
     Rubinius.convert_to_names methods
   end
 
   def public_instance_methods(all=true)
-    Rubinius.convert_to_names(filter_methods(:public_names, all))
+    Rubinius.convert_to_names(filter_methods(:public, all))
   end
 
   def private_instance_methods(all=true)
-    Rubinius.convert_to_names(filter_methods(:private_names, all))
+    Rubinius.convert_to_names(filter_methods(:private, all))
   end
 
   def protected_instance_methods(all=true)
-    Rubinius.convert_to_names(filter_methods(:protected_names, all))
+    Rubinius.convert_to_names(filter_methods(:protected, all))
   end
 
   def filter_methods(filter, all)
-    return @method_table.__send__ filter unless all
+    table = {}
 
     mod = self
-    symbols = []
-    undefs = []
 
     while mod
-      symbols += mod.method_table.__send__ filter
-      mod.method_table.filter_entries do |entry|
-        undefs << entry.name if entry.visibility == :undef
+      mod.method_table.each do |name, obj, vis|
+        unless table.key?(name)
+          table[name] = vis
+        end
       end
+
+      break unless all
       mod = mod.direct_superclass
     end
 
-    symbols.uniq - undefs
+    ary = []
+    table.each do |name, vis|
+      ary << name if vis == filter
+    end
+
+    return ary
   end
+
+  private :filter_methods
 
   def define_method(name, meth = nil, &prc)
     meth ||= prc
@@ -601,7 +614,7 @@ class Module
     if mod == Object
       @module_name = name.to_sym
     else
-      @module_name = "#{mod.__name__}::#{name}".to_sym
+      @module_name = "#{mod.__path__}::#{name}".to_sym
     end
   end
 
@@ -611,18 +624,21 @@ class Module
     raise TypeError, "autoload filename must be a String" unless path.kind_of? String
     raise ArgumentError, "empty file name" if path.empty?
 
-    return if Requirer::Utils.provided?(path)
+    return if Rubinius::CodeLoader.feature_provided?(path)
 
     name = normalize_const_name(name)
 
     if existing = constant_table[name]
       if existing.kind_of? Autoload
-        existing.destroy!
+        # If there is already an Autoload here, just change the path to
+        # autoload!
+        existing.set_path(path)
       else
         # Trying to register an autoload for a constant that already exists,
         # ignore the request entirely.
-        return
       end
+
+      return
     end
 
     constants_table[name] = Autoload.new(name, self, path)
@@ -636,7 +652,7 @@ class Module
     return unless constants_table.key?(name)
     trigger = constants_table[name]
     return unless trigger.kind_of?(Autoload)
-    trigger.original_path
+    trigger.path
   end
 
   def remove_const(name)
@@ -721,7 +737,7 @@ class Module
 
     other.constants_table.each do |name, val|
       if val.kind_of? Autoload
-        val = Autoload.new(val.name, self, val.original_path)
+        val = Autoload.new(val.name, self, val.path)
       end
 
       @constants[name] = val

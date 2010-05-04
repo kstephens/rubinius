@@ -9,62 +9,32 @@ class Autoload
   attr_reader :name
   attr_reader :scope
   attr_reader :path
-  attr_reader :original_path
 
   def initialize(name, scope, path)
     @name = name
     @scope = scope
-    @original_path = path
-    @path, @rbc, @ext = Requirer::Utils.split_path(path)
-    Autoload.add(self)
+    @path = path
   end
 
   ##
   # When any code that finds a constant sees an instance of Autoload as its match,
   # it calls this method on us
-  def call
-    self.class.remove @path
-    Requirer::Utils.unified_load path, @path, @rbc, @ext, true
-    scope.const_get @name
+  def call(honor_require=false)
+    # Remove the autoload object from the constant table it was in, so
+    # we don't recurse back into ourself.
+    scope.constants_table.delete @name
+    Rubinius.inc_global_serial
+
+    worked = Rubinius::CodeLoader.require @path
+    if !honor_require or worked
+      scope.const_get @name
+    end
   end
 
   ##
-  # Called by Autoload.remove
-  def discard
-    scope.__send__(:remove_const, name)
-  end
-
-  ## 
-  # Called to destroy an Autoload that hasn't been trigger
-  def destroy!
-    if ary = Autoload.autoloads[@path]
-      ary.delete(self)
-    end
-
-    discard
-  end
-
-  ##
-  # Class methods
-  class << self
-    ##
-    # Initializes as a Hash with an empty array as the default value
-    def autoloads
-      @autoloads ||= Hash.new {|h,k| h[k] = Array.new }
-    end
-
-    ##
-    # Called by Autoload#initialize
-    def add(al)
-      autoloads[al.path] << al
-    end
-
-    ##
-    # Called by require; see kernel/common/compile.rb
-    def remove(path)
-      al = autoloads.delete(path)
-      return unless al
-      al.each { |a| a.discard }
-    end
+  #
+  # Change the file to autoload. Used by Module#autoload
+  def set_path(path)
+    @path = path
   end
 end

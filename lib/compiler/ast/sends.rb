@@ -123,10 +123,10 @@ module Rubinius
       end
 
       def bytecode(g)
-        pos(g)
-
         @receiver.bytecode(g)
         @arguments.bytecode(g)
+
+        pos(g)
 
         if @arguments.splat?
           @block ? @block.bytecode(g) : g.push(:nil)
@@ -424,6 +424,8 @@ module Rubinius
         blk.push_state self
         blk.state.push_super state.super
         blk.state.push_eval state.eval
+
+        blk.state.push_name blk.name
 
         # Push line info down.
         pos(blk)

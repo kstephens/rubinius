@@ -80,10 +80,9 @@ describe "File.expand_path" do
       File.expand_path('~/a','~/b').should == "#{ENV['HOME']}/a"
     end
 
-    not_compliant_on :macruby do
-      it "leaves multiple prefixed slashes untouched" do
-        File.expand_path('//').should == '//'
-        File.expand_path('////').should == '////'
+    ruby_bug "#3185", "1.8" do
+      it "replaces multiple '/' at the beginning of the path with a single '/'" do
+        File.expand_path('////some/path').should == "/some/path"
       end
     end
 
@@ -94,6 +93,10 @@ describe "File.expand_path" do
     it "expands ~ENV['USER'] to the user's home directory" do
       File.expand_path("~#{ENV['USER']}").should == ENV['HOME']
       File.expand_path("~#{ENV['USER']}/a").should == "#{ENV['HOME']}/a"
+    end
+
+    it "does not expand ~ENV['USER'] when it's not at the start" do
+      File.expand_path("/~#{ENV['USER']}/a").should == "/~#{ENV['USER']}/a"
     end
 
     it "expands ../foo with ~/dir as base dir to /path/to/user/home/foo" do

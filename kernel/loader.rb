@@ -132,7 +132,7 @@ containing the Rubinius standard library files.
         if @script.nil? and @evals.empty?
           @script = x
         else
-          ARGV.unshift x
+          argv.unshift x
         end
         options.stop_parsing
       end
@@ -143,7 +143,7 @@ containing the Rubinius standard library files.
       options.on "-", "Read and evaluate code from STDIN" do
         @run_irb = false
         $0 = "-"
-        Requirer::Utils.execute STDIN.read
+        CodeLoader.execute_script STDIN.read
       end
 
       options.on "--", "Stop processing command line arguments" do
@@ -252,7 +252,7 @@ containing the Rubinius standard library files.
 
       options.on "--remote-debug", "Run the program under the control of a remote debugger" do
         require 'debugger/debug_server'
-        if port = (ARGV.first =~ /^\d+$/ and ARGV.shift)
+        if port = (argv.first =~ /^\d+$/ and argv.shift)
           $DEBUG_SERVER = Rubinius::Debugger::Server.new(port.to_i)
         else
           $DEBUG_SERVER = Rubinius::Debugger::Server.new
@@ -320,6 +320,28 @@ containing the Rubinius standard library files.
       DOC
 
       options.parse ARGV
+
+      handle_rubyopt(options)
+    end
+
+    def handle_rubyopt(options)
+      if ENV['RUBYOPT']
+        options.start_parsing
+        env_opts = ENV['RUBYOPT'].strip.split(/\s+/)
+
+        until env_opts.empty?
+          entry = env_opts.shift
+
+          unless entry[0] == ?-
+            entry = "-#{entry}"
+          end
+
+          opt, arg, rest = options.split entry, 2
+
+          options.process env_opts, entry, opt, arg
+        end
+      end
+
     end
 
     # Update the load paths with any -I arguments.
@@ -335,15 +357,15 @@ containing the Rubinius standard library files.
     end
 
     def load_compiler
+      @stage = "loading the compiler"
+
       # This happens before we parse ARGV, so we have to check ARGV ourselves
       # here.
 
       rebuild = (ARGV.last == "--rebuild-compiler")
 
       begin
-        Requirer::Utils.loading_rbc_only(rebuild ? :force : true) do
-          require "compiler"
-        end
+        CodeLoader.require_compiled "compiler", rebuild ? false : true
       rescue Rubinius::InvalidRBC => e
         STDERR.puts "There was an error loading the compiler."
         STDERR.puts "It appears that your compiler is out of date with the VM."
@@ -375,12 +397,6 @@ containing the Rubinius standard library files.
       @requires.each { |file| require file }
     end
 
-    # Require rubygems.
-    # TODO: add option to not load rubygems
-    def rubygems
-      require "gem_prelude"
-    end
-
     # Evaluate any -e arguments
     def evals
       @stage = "evaluating command line code"
@@ -398,7 +414,7 @@ containing the Rubinius standard library files.
       @exit_code = e.status
     end
 
-    # Run all scripts passed on the command line
+    # Run the script passed on the command line
     def script
       return unless @script and @evals.empty?
 
@@ -408,13 +424,7 @@ containing the Rubinius standard library files.
       if File.exist?(@script)
         $0 = @script
 
-        # make sure that the binding has a script associated with it
-        # and theat the script has a path
-        TOPLEVEL_BINDING.static_scope.script = CompiledMethod::Script.new(@script)
-
-        Requirer::Utils.debug_script! if @debugging
-        Requirer::Utils.load_from_extension @script,
-          :no_rbc => @no_rbc, :root_script => true
+        CodeLoader.load_script @script, @debugging
       else
         if @script.suffix?(".rb")
           puts "Unable to find '#{@script}'"
@@ -456,7 +466,7 @@ containing the Rubinius standard library files.
         end
       else
         $0 = "(eval)"
-        Requirer::Utils.execute "p #{STDIN.read}"
+        CodeLoader.execute_script "p #{STDIN.read}"
       end
     end
 
@@ -503,7 +513,6 @@ containing the Rubinius standard library files.
       preload
       options
       load_paths
-      rubygems
       requires
       evals
       script
@@ -527,15 +536,21 @@ containing the Rubinius standard library files.
       epilogue
       done
     end
+
+    # Creates an instance of the Loader and runs it. We catch any uncaught
+    # exceptions here and report them before exiting.
+    def self.main
+      begin
+        new.main
+      rescue Object => exc
+        puts "\n====================================="
+        puts "Exception occurred during top-level exception output! (THIS IS BAD)"
+        puts
+        puts "Exception: #{exc.inspect} (#{exc.class})"
+        @exit_code = 128
+      end
+    end
   end
 end
 
-begin
-  Rubinius::Loader.new.main
-rescue Object => exc
-  puts "\n====================================="
-  puts "Exception occurred during top-level exception output! (THIS IS BAD)"
-  puts
-  puts "Exception: #{exc.inspect} (#{exc.class})"
-  @exit_code = 128
-end
+Rubinius::Loader.main

@@ -15,7 +15,15 @@ module Rubinius
       end
     end
 
-    def self.compile(file, line=1, output=nil, transforms=:default)
+    def self.compiled_name(file)
+      if file.suffix? ".rb"
+        file + "c"
+      else
+        file + ".compiled.rbc"
+      end
+    end
+
+    def self.compile(file, output=nil, line=1, transforms=:default)
       compiler = new :file, :compiled_file
 
       parser = compiler.parser
@@ -30,12 +38,10 @@ module Rubinius
       parser.input file, line
 
       writer = compiler.writer
-      writer.name = output
+      writer.name = output ? output : compiled_name(file)
 
       begin
         compiler.run
-      rescue LoadError => e
-        raise e
       rescue Exception => e
         compiler_error "Error trying to compile #{file}", e
       end
@@ -57,8 +63,6 @@ module Rubinius
 
       begin
         compiler.run
-      rescue LoadError => e
-        raise e
       rescue Exception => e
         compiler_error "Error trying to compile #{file}", e
       end

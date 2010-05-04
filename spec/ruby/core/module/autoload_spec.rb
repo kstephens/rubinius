@@ -104,13 +104,14 @@ describe "Module#autoload" do
 
   it "does not load the file if the file is manually required" do
     filename = fixture(__FILE__, "autoload_k.rb")
-    ModuleSpecs::Autoload.autoload :K, filename
+    ModuleSpecs::Autoload.autoload :KHash, filename
 
     require filename
     ScratchPad.recorded.should == :loaded
     ScratchPad.clear
 
-    ModuleSpecs::Autoload::K.should == :autoload_k
+    ModuleSpecs::Autoload::KHash.should be_kind_of(Class)
+    ModuleSpecs::Autoload::KHash::K.should == :autoload_k
     ScratchPad.recorded.should be_nil
   end
 
@@ -124,6 +125,19 @@ describe "Module#autoload" do
 
     ModuleSpecs::Autoload.autoload :S, filename
     ModuleSpecs::Autoload.autoload?(:S).should be_nil
+  end
+
+  it "retains the autoload even if the request to require fails" do
+    filename = fixture(__FILE__, "a_path_that_should_not_exist.rb")
+
+    ModuleSpecs::Autoload.autoload :NotThere, filename
+    ModuleSpecs::Autoload.autoload?(:NotThere).should == filename
+
+    lambda {
+      require filename
+    }.should raise_error(LoadError)
+
+    ModuleSpecs::Autoload.autoload?(:NotThere).should == filename
   end
 
   it "allows multiple autoload constants for a single file" do

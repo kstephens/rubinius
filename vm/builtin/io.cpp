@@ -915,6 +915,9 @@ failed: /* try next '*' position */
     buf->reset(state);
     buf->write_synced(state, Qtrue);
 
+    // Prime the channel
+    buf->channel()->send(state, Qtrue);
+
     return buf;
   }
 
@@ -975,6 +978,12 @@ failed: /* try next '*' position */
     }
 
     if(bytes_read > 0) {
+      // Detect if another thread has updated the buffer
+      // and now there isn't enough room for this data.
+      if(bytes_read > (ssize_t)self->left()) {
+        Exception::internal_error(state, calling_environment, "IO buffer overrun");
+        return NULL;
+      }
       memcpy(self->at_unused(), temp_buffer, bytes_read);
       self->read_bytes(state, bytes_read);
     }
