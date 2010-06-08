@@ -42,6 +42,7 @@ module Config
   CONFIG["ruby_version"]       = "$(MAJOR).$(MINOR)"
   CONFIG["RUBY_SO_NAME"]       = "rubinius-#{Rubinius::VERSION}"
   CONFIG["rubyhdrdir"]         = "#{Rubinius::HDR_PATH}"
+  CONFIG["LIBS"]               = ""
 
   sitedir                      = Rubinius::SITE_PATH
   sitelibdir                   = sitedir
@@ -105,10 +106,10 @@ module Config
   CONFIG["MANTYPE"]            = "doc"
   CONFIG["MAKEFILES"]          = "Makefile"
   # compile tools flags
-  CONFIG["CFLAGS"]             = "-ggdb3 -O2"
-  if RUBY_PLATFORM =~ /linux/
-    CONFIG["CFLAGS"] << " -fPIC"
-  end
+  # since we hardcode using gcc, and this flag is only
+  # used by mkmf to compile extensions, be sure PIC is in
+  # there
+  CONFIG["CFLAGS"]             = "-ggdb3 -O2 -fPIC"
   CONFIG["LDFLAGS"]            = ""
   CONFIG["CPPFLAGS"]           = ""
   CONFIG["OBJEXT"]             = "o"
@@ -143,7 +144,7 @@ module Config
   CONFIG["LIBRUBY"]            = "$(LIBRUBY_SO)"
   CONFIG["LIBRUBYARG"]         = "$(LIBRUBYARG_STATIC)"
   CONFIG["LIBRUBYARG_STATIC"]  = ""
-  CONFIG["LIBRUBYARG_SHARED"]  = "-l$(RUBY_SO_NAME)"
+  CONFIG["LIBRUBYARG_SHARED"]  = ""
   CONFIG["configure_args"]     = ""
   CONFIG["ALLOCA"]             = ""
   CONFIG["LIBEXT"]             = "a"

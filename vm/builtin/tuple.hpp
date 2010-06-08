@@ -16,7 +16,7 @@ namespace rubinius {
     int full_size_;
 
     /* Body access */
-    Object* field[];
+    Object* field[0];
 
   public:
     uint32_t num_fields() const {
@@ -76,7 +76,12 @@ namespace rubinius {
   public: // Rubinius Type stuff
     class Info : public TypeInfo {
     public:
-      Info(object_type type, bool cleanup = false) : TypeInfo(type, cleanup) { }
+      Info(object_type type, bool cleanup = false)
+        : TypeInfo(type, cleanup)
+      {
+        allow_user_allocate = false;
+      }
+
       virtual void mark(Object* obj, ObjectMark& mark);
       virtual void auto_mark(Object* obj, ObjectMark& mark) {}
       virtual void visit(Object* obj, ObjectVisitor& visit);

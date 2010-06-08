@@ -20,7 +20,7 @@ end
 require config_rb
 BUILD_CONFIG = Rubinius::BUILD_CONFIG
 
-unless BUILD_CONFIG[:config_version] == 5
+unless BUILD_CONFIG[:config_version] == 9
   STDERR.puts "Your configuration is outdated, please run ./configure first"
   exit 1
 end
@@ -38,7 +38,7 @@ task :default => %w[build vm:test] do
     ENV["CFLAGS"]      = "-Ivm/capi"
   end
 
-  sh "bin/mspec ci -B full --background"
+  sh "bin/mspec ci --background"
 end
 
 # See vm.rake for more information

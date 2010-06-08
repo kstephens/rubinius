@@ -142,7 +142,7 @@ namespace rubinius {
 
   const llvm::Type* LLVMState::ptr_type(std::string name) {
     std::string full_name = std::string("struct.rubinius::") + name;
-    return PointerType::getUnqual(
+    return llvm::PointerType::getUnqual(
         module_->getTypeByName(full_name.c_str()));
   }
 
@@ -296,7 +296,7 @@ namespace rubinius {
 
         void* func = 0;
         {
-          timer::Running timer(ls_->time_spent);
+          timer::Running<size_t, 1000000> timer(ls_->shared().stats.jit_time_spent);
 
           if(req->is_block()) {
             jit.compile_block(ls_, req->method(), req->vmmethod());
@@ -335,12 +335,19 @@ namespace rubinius {
 
         req->method()->jit_data()->run_write_barrier(ls_->write_barrier(), req->method());
 
+        ls_->shared().stats.jitted_methods++;
+
         int which = ls_->add_jitted_method();
         if(ls_->config().jit_show_compiling) {
           llvm::outs() << "[[[ JIT finished background compiling "
                     << which
                     << (req->is_block() ? " (block)" : " (method)")
                     << " ]]]\n";
+        }
+
+        // If someone was waiting on this, wake them up.
+        if(thread::Condition* cond = req->waiter()) {
+          cond->signal();
         }
 
         delete req;
@@ -390,7 +397,7 @@ namespace rubinius {
   }
 
   LLVMState::LLVMState(STATE)
-    : ManagedThread(state->shared)
+    : ManagedThread(state->shared, ManagedThread::eSystem)
     , ctx_(llvm::getGlobalContext())
     , config_(state->shared.config)
     , global_lock_(state->global_lock())
@@ -405,6 +412,8 @@ namespace rubinius {
     , log_(0)
     , time_spent(0)
   {
+
+    set_name("Background Compiler");
     state->shared.add_managed_thread(this);
     state->shared.om->add_aux_barrier(&write_barrier_);
 
@@ -442,7 +451,7 @@ namespace rubinius {
     FloatTy = Type::getFloatTy(ctx_);
     DoubleTy = Type::getDoubleTy(ctx_);
 
-    Int8PtrTy = PointerType::getUnqual(Int8Ty);
+    Int8PtrTy = llvm::PointerType::getUnqual(Int8Ty);
 
     bool fast_code_passes = false;
 
@@ -547,6 +556,7 @@ namespace rubinius {
   void LLVMState::compile_soon(STATE, CompiledMethod* cm, BlockEnvironment* block) {
     Object* placement;
     bool is_block = false;
+    bool wait = config().jit_sync;
 
     // Ignore it!
     if(cm->backend_method()->call_count < 0) {
@@ -576,17 +586,37 @@ namespace rubinius {
 
     queued_methods_++;
 
-    background_thread_->add(req);
+    if(wait) {
+      thread::Condition cond;
+      req->set_waiter(&cond);
 
-    if(state->shared.config.jit_show_compiling) {
-      llvm::outs() << "[[[ JIT Queued"
-                << (block ? " block " : " method ")
-                << queued_methods() << "/"
-                << jitted_methods() << " ]]]\n";
+      thread::Mutex mux;
+      mux.lock();
+
+      background_thread_->add(req);
+      cond.wait(mux);
+
+      mux.unlock();
+
+      if(config().jit_inline_debug) {
+        log() << "JIT: compiled method: "
+              << symbol_cstr(cm->name()) << "\n";
+      }
+    } else {
+      background_thread_->add(req);
+
+      if(state->shared.config.jit_show_compiling) {
+        llvm::outs() << "[[[ JIT Queued"
+          << (block ? " block " : " method ")
+          << queued_methods() << "/"
+          << jitted_methods() << " ]]]\n";
+      }
     }
   }
 
   void LLVMState::remove(llvm::Function* func) {
+    shared_.stats.jitted_methods--;
+
     engine_->getPointerToFunction(func);
 
     // Deallocate the JITed code

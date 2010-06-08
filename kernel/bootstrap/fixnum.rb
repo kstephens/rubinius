@@ -85,14 +85,26 @@ class Fixnum < Integer
     super(o)
   end
 
-  def <<(o)
+  def <<(other)
     Ruby.primitive :fixnum_left_shift
-    super(o)
+
+    other = Type.coerce_to other, Integer, :to_int
+    unless other.kind_of? Fixnum
+      raise RangeError, "argument is out of range for a Fixnum"
+    end
+
+    self << other
   end
 
-  def >>(o)
+  def >>(other)
     Ruby.primitive :fixnum_right_shift
-    super(o)
+
+    other = Type.coerce_to other, Integer, :to_int
+    unless other.kind_of? Fixnum
+      raise RangeError, "argument is out of range for a Fixnum"
+    end
+
+    self >> other
   end
 
   def **(o)
@@ -109,7 +121,7 @@ class Fixnum < Integer
 
   def ==(o)
     Ruby.primitive :fixnum_equal
-    super(o)
+    o == self
   end
 
   alias_method :===, :==

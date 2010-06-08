@@ -522,8 +522,9 @@ namespace rubinius {
 
     NMP;
     MMP;
+
     mp_div(XST, mp_val(), b->mp_val(), n, m);
-    if(mp_cmp_d(n, 0) == MP_LT && mp_cmp_d(m, 0) != MP_EQ) {
+    if(mp_val()->sign != b->mp_val()->sign && mp_cmp_d(m, 0) != MP_EQ) {
       mp_sub_d(XST, n, 1, n);
       mp_mul(XST, b->mp_val(), n, m);
       mp_sub(XST, mp_val(), m, m);
@@ -654,7 +655,7 @@ namespace rubinius {
 
   Integer* Bignum::left_shift(STATE, Fixnum* bits) {
     NMP;
-    int shift = bits->to_native();
+    native_int shift = bits->to_native();
     if(shift < 0) {
       return right_shift(state, Fixnum::from(-bits->to_native()));
     }
@@ -667,7 +668,7 @@ namespace rubinius {
 
   Integer* Bignum::right_shift(STATE, Fixnum* bits) {
     NMP;
-    int shift = bits->to_native();
+    native_int shift = bits->to_native();
     if(shift < 0) {
       return left_shift(state, Fixnum::from(-bits->to_native()));
     }

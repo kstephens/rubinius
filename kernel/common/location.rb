@@ -6,6 +6,10 @@ module Rubinius
     attr_accessor :method
     attr_accessor :name
 
+    attr_reader :ip
+    attr_reader :variables
+    attr_reader :static_scope
+
     def inlined?
       @name.nil?
     end
@@ -46,31 +50,31 @@ module Rubinius
     # Current line being executed by the VM.
     def line
       return 0 unless @method
-      # We subtract 1 because the ip is actually set to what it should do
-      # next, not what it's currently doing (unless we are at the start of
-      # a new context).
-      ip = @ip - 1
+      ip = @ip
       ip = 0 if @ip < 0
+
       @method.line_from_ip(ip)
     end
 
     def file(relative_to=nil)
+      path = @method.active_path
+
       if relative_to
         # Be sure we can bail out if something doesn't work and still
         # show something.
         begin
-          full = File.expand_path @method.file.to_s
+          full = File.expand_path path
           if full.prefix? relative_to
             return full[relative_to.size+1..-1]
           else
-            return @method.file
+            return path
           end
         rescue Object => e
-          return @method.file
+          return path
         end
       end
 
-      @method.file
+      path
     end
 
     ##
@@ -79,7 +83,7 @@ module Rubinius
       l = line()
 
       if l == 0
-        "#{file(relative_to)}+#{@ip-1}"
+        "#{file(relative_to)}+#{@ip}"
       else
         "#{file(relative_to)}:#{l}"
       end

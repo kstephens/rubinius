@@ -16,6 +16,7 @@
 #include "builtin/taskprobe.hpp"
 #include "builtin/system.hpp"
 #include "builtin/fiber.hpp"
+#include "builtin/location.hpp"
 
 #include "instruments/profiler.hpp"
 
@@ -43,10 +44,15 @@
 namespace rubinius {
 
   bool GlobalLock::debug_locking = false;
-  int VM::cStackDepthMax = 655300;
+  unsigned long VM::cStackDepthMax = 655300;
+
+  // getrlimit can report there is 4G of stack (ie, unlimited).
+  // Even when there is unlimited stack, we clamp the max to
+  // this value (currently 128M)
+  static rlim_t cMaxStack = (1024 * 1024 * 128);
 
   VM::VM(SharedState& shared)
-    : ManagedThread(shared)
+    : ManagedThread(shared, ManagedThread::eRuby)
     , saved_call_frame_(0)
     , stack_start_(0)
     , profiler_(0)
@@ -240,17 +246,23 @@ namespace rubinius {
   }
 
   void VM::raise_stack_error(CallFrame* call_frame) {
-    G(stack_error)->locations(this, System::vm_backtrace(this, Fixnum::from(0), call_frame));
+    G(stack_error)->locations(this, Location::from_call_stack(this, call_frame));
     thread_state()->raise_exception(G(stack_error));
   }
 
   void VM::init_stack_size() {
     struct rlimit rlim;
-    if (getrlimit(RLIMIT_STACK, &rlim) == 0) {
-      unsigned int space = rlim.rlim_cur/5;
+    if(getrlimit(RLIMIT_STACK, &rlim) == 0) {
+      rlim_t space = rlim.rlim_cur/5;
 
-      if (space > 1024*1024) space = 1024*1024;
-      cStackDepthMax = (rlim.rlim_cur - space);
+      if(space > 1024*1024) space = 1024*1024;
+      rlim_t adjusted = (rlim.rlim_cur - space);
+
+      if(adjusted > cMaxStack) {
+        cStackDepthMax = cMaxStack;
+      } else {
+        cStackDepthMax = adjusted;
+      }
     }
   }
 

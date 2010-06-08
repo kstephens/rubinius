@@ -19,7 +19,9 @@ class Array
 
   # Returns a new Array populated with the given objects
   def self.[](*args)
-    new args
+    ary = allocate
+    ary.replace args
+    ary
   end
 
   # Creates a new Array. Without arguments, an empty
@@ -34,6 +36,8 @@ class Array
   # result. The block supercedes any object given. If
   # neither is provided, the Array is filled with nil.
   def initialize(size_or_array=undefined, obj=undefined)
+    Ruby.check_frozen
+
     if size_or_array.equal? undefined
       unless @total == 0
         @total = @start = 0
@@ -108,14 +112,14 @@ class Array
     if start_idx < 0 or start_idx >= @total
       # ONE past end only, MRI compat
       if start_idx == @total
-        return self.class.new
+        return self.class.allocate
       else
         return nil
       end
     end
 
     if count
-      return self.class.new if count == 0
+      return self.class.allocate if count == 0
       finish_idx = start_idx + count - 1
     else # from a range
       finish_idx = Type.coerce_to arg1.end, Fixnum, :to_int
@@ -124,13 +128,13 @@ class Array
     end
 
     if finish_idx < start_idx
-      return self.class.new
+      return self.class.allocate
     else
       # Going past the end is ignored (sort of)
       finish_idx = (@total - 1) if finish_idx >= @total
 
       tot = finish_idx - start_idx + 1
-      out = self.class.new
+      out = self.class.allocate
       out.tuple = Rubinius::Tuple.new(tot)
       out.total = tot
       out.tuple.copy_from(@tuple, @start + start_idx, tot, 0)
@@ -142,6 +146,8 @@ class Array
 
   def set_index(index, ent, fin=undefined)
     Ruby.primitive :array_aset
+
+    Ruby.check_frozen
 
     ins_length = nil
     unless fin.equal? undefined
@@ -250,6 +256,8 @@ class Array
   # Appends the object to the end of the Array.
   # Returns self so several appends can be chained.
   def <<(obj)
+    Ruby.check_frozen
+
     set_index(@total, obj)
     self
   end
@@ -299,7 +307,7 @@ class Array
       new_total = multiplier * @total
       new_tuple = Rubinius::Tuple.new(new_total)
 
-      out = self.class.new()
+      out = self.class.allocate
       out.tuple = new_tuple
       out.total = new_total
       out.taint if self.tainted? && multiplier > 0
@@ -423,6 +431,8 @@ class Array
 
   # Removes all elements in the Array and leaves it empty
   def clear()
+    Ruby.check_frozen
+
     @tuple = Rubinius::Tuple.new(1)
     @total = 0
     @start = 0
@@ -442,10 +452,13 @@ class Array
     picks = (0...num).to_a                   # picks start at 0, 1, 2
     max = ((size-num)...size).to_a           # max (index for a given pick) is [4, 5, 6]
     pick_max_pairs = picks.zip(max).reverse  # pick_max_pairs = [[2, 6], [1, 5], [0, 4]]
-    lookup = pick_max_pairs.find(Proc.new{return self})
-    loop do
+
+    return_proc = Proc.new { return self }
+    lookup = pick_max_pairs.find(return_proc)
+
+    while true
       yield values_at(*picks)
-      move = lookup.each{|pick, max| picks[pick] < max}.first
+      move = lookup.each{ |pick, max| picks[pick] < max }.first
       new_index = picks[move] + 1
       picks[move...num] = (new_index...(new_index+num-move)).to_a
     end
@@ -459,6 +472,8 @@ class Array
 
   # Removes all nil elements from self, returns nil if no changes
   def compact!
+    Ruby.check_frozen
+
     if (deleted = @tuple.delete(@start,@total,nil)) > 0
       @total -= deleted
       reallocate_shrink()
@@ -472,7 +487,12 @@ class Array
   def concat(other)
     Ruby.primitive :array_concat
 
-    concat Type.coerce_to(other, Array, :to_ary)
+    other = Type.coerce_to(other, Array, :to_ary)
+    return self if other.empty?
+
+    Ruby.check_frozen
+
+    concat other
   end
 
   # Calls block for each element repeatedly n times or forever if none
@@ -482,9 +502,19 @@ class Array
     return to_enum(:cycle, n) unless block_given?
     if n
       n = Type.coerce_to n, Fixnum, :to_int
-      n.times{each(&block)}
+      n.times do
+        i = to_iter
+        while i.next
+          yield i.item
+        end
+      end
     else
-      loop{each(&block)}
+      while true
+        i = to_iter
+        while i.next
+          yield i.item
+        end
+      end
     end
     nil
   end
@@ -518,6 +548,8 @@ class Array
   # the deleted element or nil if the index is out of
   # range. Negative indices count backwards from end.
   def delete_at(idx)
+    Ruby.check_frozen
+
     idx = Type.coerce_to idx, Fixnum, :to_int
 
     # Flip to positive and weed out out of bounds
@@ -536,21 +568,30 @@ class Array
 
   # Deletes every element from self for which block evaluates to true
   def delete_if(&block)
+    Ruby.check_frozen
+
     return to_enum :delete_if unless block_given?
 
     return self if empty?
 
     key = undefined
     i = to_iter
-    while i.next
-      set_index(i.index, key) if yield i.item
+
+    begin
+      while i.next
+        set_index(i.index, key) if yield i.item
+      end
+    ensure
+      # The yield'd block might raise an exception, in which case we
+      # need to clean up the work we've done thus far, otherwise the
+      # Array is left in a corrupted state.
+      deleted = @tuple.delete @start, @total, key
+      if deleted > 0
+        @total -= deleted
+        reallocate_shrink()
+      end
     end
 
-    deleted = @tuple.delete @start, @total, key
-    if deleted > 0
-      @total -= deleted
-      reallocate_shrink()
-    end
     return self
   end
 
@@ -630,6 +671,8 @@ class Array
 
   # TODO: rewrite this method
   def fill(*args)
+    Ruby.check_frozen
+
     raise ArgumentError, "Wrong number of arguments" if block_given? and args.size > 2
     raise ArgumentError, "Wrong number of arguments" if !block_given? and args.size == 0
     raise ArgumentError, "Wrong number of arguments" if args.size > 3
@@ -856,6 +899,8 @@ class Array
   # after them.
   def insert(idx, *items)
     return self if items.length == 0
+
+    Ruby.check_frozen
 
     # Adjust the index for correct insertion
     idx = Type.coerce_to idx, Fixnum, :to_int
@@ -1093,6 +1138,8 @@ class Array
 
   # Removes and returns the last element from the Array.
   def pop(many=undefined)
+    Ruby.check_frozen
+
     if many.equal? undefined
       return nil if @total == 0
 
@@ -1145,6 +1192,8 @@ class Array
   # Appends the given object(s) to the Array and returns
   # the modified self.
   def push(*args)
+    return self if args.empty?
+
     concat args
   end
 
@@ -1173,6 +1222,8 @@ class Array
   # Equivalent to #delete_if except that returns nil if
   # no changes were made.
   def reject!(&block)
+    Ruby.check_frozen
+
     return to_enum :reject! unless block_given?
 
     was = length
@@ -1184,6 +1235,8 @@ class Array
   # Replaces contents of self with contents of other,
   # adjusting size as needed.
   def replace(other)
+    Ruby.check_frozen
+
     other = Type.coerce_to other, Array, :to_ary
 
     @tuple = other.tuple.dup
@@ -1201,6 +1254,8 @@ class Array
   # Reverses the order of elements in self. Returns self
   # even if no changes are made
   def reverse!
+    Ruby.check_frozen
+
     return self unless @total > 1
 
     @tuple.reverse! @start, @total
@@ -1264,6 +1319,8 @@ class Array
   # Array or nil if empty. All other elements are
   # moved down one index.
   def shift(n=undefined)
+    Ruby.check_frozen
+
     if n.equal? undefined
       return nil if @total == 0
 
@@ -1287,6 +1344,8 @@ class Array
   # or by a range. Returns the deleted object, subarray, or nil if the
   # index is out of range. Equivalent to:
   def slice!(start, length=undefined)
+    Ruby.check_frozen
+
     if length.equal? undefined
       out = self[start]
 
@@ -1346,6 +1405,8 @@ class Array
 
   # Sorts this Array in-place. See #sort.
   def sort_inplace(&block)
+    Ruby.check_frozen
+
     return self unless @total > 1
 
     if (@total - @start) < 6
@@ -1427,6 +1488,8 @@ class Array
   def uniq!
     im = IdentityMap.new self
     return if im.size == size
+
+    Ruby.check_frozen
     im.to_array self
   end
 
@@ -1501,6 +1564,10 @@ class Array
   end
 
   def unshift(*values)
+    return self if values.empty?
+
+    Ruby.check_frozen
+
     if @start > values.size
       # fit the new values in between 0 and @start if possible
       @start -= values.size
@@ -1517,18 +1584,7 @@ class Array
     self
   end
 
-  # Exactly the same as #replace but private
-  def initialize_copy(other)
-    raise TypeError, "array is frozen" if frozen?
-
-    other = Type.coerce_to other, Array, :to_ary
-
-    @tuple = other.tuple.dup
-    @total = other.total
-    @start = other.start
-    self
-  end
-
+  alias_method :initialize_copy, :replace
   private :initialize_copy
 
   # Reallocates the internal Tuple to accommodate at least given size
@@ -1599,251 +1655,88 @@ class Array
 
   private :recursively_flatten
 
-  ISORT_THRESHOLD   = 7
-  MEDIAN_THRESHOLD  = 11
-
   # In-place non-recursive sort between the given indexes.
   def qsort!
-    # Stack stores the indexes that still need sorting
-    stack = []
-    left_end, right_end = @start, (@total - 1)
+    stack = [[@start, @start + @total - 1]]
 
-    # We are either processing a 'new' partition or one that
-    # was saved to stack earlier.
-    while true
-      left, right = left_end, (right_end - 1)   # Leave room for pivot
-      eqls_left, eqls_right = (left_end - 1), right_end
+    until stack.empty?
+      left, right = stack.pop
 
-      # Choose pivot from median
-      # CAUTION: This is NOT the same as #qsort_block!
-      middle = left_end + ((right_end - left_end) / 2)
-      low, mid, hi = @tuple.at(left_end), @tuple.at(middle), @tuple.at(right_end)
+      if right > left
+        pivotindex = left + ((right - left) / 2)
+        # pi_new = qsort_partition(left, right, pi)
+        # inline pivot routine
 
-      segment_size = right_end - left_end
+        pivot = @tuple.at(pivotindex)
 
-      # "Heuristic" to avoid problems with reverse-sorted
-      if segment_size > 1000 and (low <=> mid) > 0 and (mid <=> hi) > 0
-        semi_left = @tuple.at(left_end + ((middle - left_end) / 2))
-        semi_right = @tuple.at(middle + ((right_end - middle) / 2))
+        @tuple.swap(pivotindex, right)
+        store = left
 
-        if (low <=> semi_left) > 0 and (semi_left <=> mid) > 0 and
-           (mid <=> semi_right) > 0 and (semi_right <=> hi) > 0
-
-          r = segment_size / 4
-          while r > 0
-            @tuple.swap(rand(segment_size), rand(segment_size))
-            r -= 1
+        i = left
+        while i < right
+          cmp = (@tuple.at(i) <=> pivot)
+          if cmp < 0
+            @tuple.swap(i, store)
+            store += 1
           end
 
-          middle += (right_end - middle) / 2
-        end
-      end
-
-      # These can be reordered which may help with sorting randomly
-      # distributed elements at the cost of presorted. Be sure to
-      # mark down the correct order though..
-      @tuple.swap(left_end, right_end)  if (hi <=> low) < 0
-      @tuple.swap(left_end, middle)     if (mid <=> low) < 0
-      @tuple.swap(middle, right_end)    if (hi <=> mid) < 0
-
-      pivot = @tuple.at(middle)
-      @tuple.swap(right_end, middle)  # Known position to help partition three ways
-
-      # Partition
-      while true
-        while left < right_end
-          cmp = @tuple.at(left) <=> pivot
-          break if cmp > 0
-          @tuple.swap(left, (eqls_left += 1)) if cmp == 0
-          left += 1
+          i += 1
         end
 
-        while right > left_end
-          cmp = @tuple.at(right) <=> pivot
-          break if cmp < 0
-          @tuple.swap(right, (eqls_right -= 1)) if cmp == 0
-          right -= 1
-        end
+        @tuple.swap(store, right)
 
-        break if left >= right
-        @tuple.swap(left, right)
-      end
+        pi_new = store
 
-      # Move pivot back to the middle
-      @tuple.swap(left, right_end)
-      left, right = (left - 1), (left + 1)
-
-      # Move the stashed == pivot elements back to the middle
-      while eqls_left >= left_end
-        @tuple.swap(eqls_left, left)
-        left -= 1
-        eqls_left -= 1
-      end
-
-      unless right >= right_end
-        while eqls_right < right_end and right < right_end
-          @tuple.swap(eqls_right, right)
-          right += 1
-          eqls_right += 1
-        end
-      end
-
-      # Continue processing the now smaller partitions or if
-      # done with this segment, restore a stored one from the
-      # stack until nothing remains either way.
-      left_size, right_size = (left - left_end), (right_end - right)
-
-      # Insertion sort is faster at anywhere below 7-9 elements
-      if left_size < ISORT_THRESHOLD
-        isort! left_end, left
-
-        # We can restore next saved if both of these are getting sorted
-        if right_size < ISORT_THRESHOLD
-          isort! right, right_end
-          break if stack.empty?       # Completely done, no stored ones left either
-          left_end, right_end = stack.pop
-        else
-          left_end = right
-        end
-
-      elsif right_size < ISORT_THRESHOLD
-        isort! right, right_end
-        right_end = left
-
-      # Save whichever is the larger partition and do the smaller first
-      else
-        if left_size > right_size
-          stack.push [left_end, left]
-          left_end = right
-        else
-          stack.push [right, right_end]
-          right_end = left
-        end
+        # end pivot
+        stack.push [left, pi_new - 1]
+        stack.push [pi_new + 1, right]
       end
     end
-  end # qsort!
+
+    self
+  end
   private :qsort!
 
   # In-place non-recursive sort between the given indexes using a block.
   def qsort_block!(block)
-    # Stack stores the indexes that still need sorting
-    stack = []
-    left_end, right_end = @start, (@total - 1)
+    stack = [[@start, @start + @total - 1]]
 
-    # We are either processing a 'new' partition or one that
-    # was saved to stack earlier.
-    while true
-      left, right = left_end, (right_end - 1)   # Leave room for pivot
-      eqls_left, eqls_right = (left_end - 1), right_end
+    until stack.empty?
+      left, right = stack.pop
 
-      # Choose pivot from median
-      # CAUTION: This is NOT the same as #qsort!
-      middle = left_end + ((right_end - left_end) / 2)
-      low, mid, hi = @tuple.at(left_end), @tuple.at(middle), @tuple.at(right_end)
+      if right > left
+        pivotindex = left + ((right - left) / 2)
+        # pi_new = qsort_partition(left, right, pi)
+        # inline pivot routine
 
-      segment_size = right_end - left_end
+        pivot = @tuple.at(pivotindex)
 
-      # "Heuristic" for reverse-sorted
-      if segment_size > 1000 and block.call(low, mid) > 0 and block.call(mid, hi) > 0
-        semi_left = @tuple.at(left_end + ((middle - left_end) / 2))
-        semi_right = @tuple.at(middle + ((right_end - middle) / 2))
+        @tuple.swap(pivotindex, right)
+        store = left
 
-        if block.call(low, semi_left) > 0 and block.call(semi_left, mid) > 0 and
-           block.call(mid, semi_right) > 0 and block.call(semi_right, hi) > 0
-
-          r = segment_size / 4
-          while r > 0
-            @tuple.swap(rand(segment_size), rand(segment_size))
-            r -= 1
+        i = left
+        while i < right
+          cmp = Comparable.compare_int block.call(@tuple.at(i), pivot)
+          if cmp < 0
+            @tuple.swap(i, store)
+            store += 1
           end
 
-          middle += (right_end - middle) / 2
-        end
-      end
-
-      # These can be reordered which may help with sorting randomly
-      # distributed elements at the cost of presorted. Be sure to
-      # mark down the correct order though..
-      @tuple.swap(left_end, right_end)  if block.call(hi, low)  < 0
-      @tuple.swap(left_end, middle)     if block.call(mid, low) < 0
-      @tuple.swap(middle, right_end)    if block.call(hi, mid)  < 0
-
-      pivot = @tuple.at(middle)
-      @tuple.swap(right_end, middle)  # Known position to help partition three ways
-
-      # Partition
-      while true
-        while left < right_end
-          cmp = block.call(@tuple.at(left), pivot)
-          break if cmp > 0
-          @tuple.swap(left, (eqls_left += 1)) if cmp == 0
-          left += 1
+          i += 1
         end
 
-        while right > left_end
-          cmp = block.call(@tuple.at(right), pivot)
-          break if cmp < 0
-          @tuple.swap(right, (eqls_right -= 1)) if cmp == 0
-          right -= 1
-        end
+        @tuple.swap(store, right)
 
-        break if left >= right
-        @tuple.swap(left, right)
-      end
+        pi_new = store
 
-      # Move pivot back to the middle
-      @tuple.swap(left, right_end)
-      left, right = (left - 1), (left + 1)
-
-      # Move the stashed == pivot elements back to the middle
-      while eqls_left >= left_end
-        @tuple.swap(eqls_left, left)
-        left -= 1
-        eqls_left -= 1
-      end
-
-      unless right >= right_end
-        while eqls_right < right_end and right < right_end
-          @tuple.swap(eqls_right, right)
-          right += 1
-          eqls_right += 1
-        end
-      end
-
-      # Continue processing the now smaller partitions or if
-      # done with this segment, restore a stored one from the
-      # stack until nothing remains either way.
-      left_size, right_size = (left - left_end), (right_end - right)
-
-      # Insertion sort is faster at anywhere below 7-9 elements
-      if left_size < ISORT_THRESHOLD
-        isort_block! left_end, left, block
-
-        # We can restore next saved if both of these are getting sorted
-        if right_size < ISORT_THRESHOLD
-          isort_block! right, right_end, block
-          break if stack.empty?       # Completely done, no stored ones left either
-          left_end, right_end = stack.pop
-        else
-          left_end = right
-        end
-
-      elsif right_size < ISORT_THRESHOLD
-        isort_block! right, right_end, block
-        right_end = left
-
-      # Save whichever is the larger partition and do the smaller first
-      else
-        if left_size > right_size
-          stack.push [left_end, left]
-          left_end = right
-        else
-          stack.push [right, right_end]
-          right_end = left
-        end
+        # end pivot
+        stack.push [left, pi_new - 1]
+        stack.push [pi_new + 1, right]
       end
     end
-  end #qsort_block!
+
+    self
+  end
   private :qsort_block!
 
   # Insertion sort in-place between the given indexes.
@@ -1900,47 +1793,5 @@ class Array
       return true if i.item === exception
     end
     false
-  end
-
-  module Frozen
-    def []=(*args) frozen_error; end
-    def set_index(*args) frozen_error; end
-    def <<(*args) frozen_error; end
-    def clear() frozen_error; end
-    def compact!() frozen_error; end
-    def concat(other) frozen_error unless other.empty?; self; end
-    def delete_if(*args) frozen_error; end
-    def delete_at(*args) frozen_error; end
-    def fill(*args) frozen_error; end
-    def initialize(*args) frozen_error; end
-    def insert(idx, *args) frozen_error unless args.empty?; self; end
-    def map!() frozen_error; end
-    def pop(*args) frozen_error; end
-    def push(*args) frozen_error unless args.empty?; self; end
-    def reject!(*args) frozen_error; end
-    def replace(*args) frozen_error; end
-    def reverse!() frozen_error; end
-    def shift(*args) frozen_error; end
-    def slice!(*args) frozen_error; end
-    def sort!() frozen_error; end
-    def unshift(*args); frozen_error unless args.empty?; self; end
-
-    def uniq!
-      im = IdentityMap.new self
-      return if im.size == size
-
-      frozen_error
-    end
-
-    def frozen_error
-      raise TypeError, "can't modify frozen array"
-    end
-    private :frozen_error
-  end
-
-  def freeze
-    super
-    extend Frozen
-    self
   end
 end

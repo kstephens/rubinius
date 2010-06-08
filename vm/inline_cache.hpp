@@ -14,7 +14,7 @@
 
 namespace rubinius {
   class InlineCache;
-  class CallFrame;
+  struct CallFrame;
   class Arguments;
 
   // How many receiver class have been seen to keep track of inside an IC
@@ -81,6 +81,9 @@ namespace rubinius {
                                Arguments& args);
 
     static Object* empty_cache_private(STATE, InlineCache* cache, CallFrame* call_frame,
+                               Arguments& args);
+
+    static Object* empty_cache_vcall(STATE, InlineCache* cache, CallFrame* call_frame,
                                Arguments& args);
 
     static Object* empty_cache_super(STATE, InlineCache* cache, CallFrame* call_frame,
@@ -166,6 +169,11 @@ namespace rubinius {
     void set_is_super() {
       initial_backend_ = empty_cache_super;
       execute_backend_ = empty_cache_super;
+    }
+
+    void set_is_vcall() {
+      initial_backend_ = empty_cache_vcall;
+      execute_backend_ = empty_cache_vcall;
     }
 
     Object* execute(STATE, CallFrame* call_frame, Arguments& args) {

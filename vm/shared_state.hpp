@@ -8,6 +8,8 @@
 #include "gc/variable_buffer.hpp"
 #include "kcode.hpp"
 
+#include "stats.hpp"
+
 #include "globals.hpp"
 #include "symboltable.hpp"
 
@@ -33,6 +35,8 @@ namespace rubinius {
   class WorldState;
   class InlineCacheRegistry;
   class ManagedThread;
+  class QueryAgent;
+  class Environment;
 
   struct Interrupts {
     bool check;
@@ -86,6 +90,9 @@ namespace rubinius {
     pthread_t timer_thread_;
 
     int primitive_hits_[Primitives::cTotalPrimitives];
+    QueryAgent* agent_;
+    VM* root_vm_;
+    Environment* env_;
 
   public:
     Globals globals;
@@ -96,9 +103,10 @@ namespace rubinius {
     Interrupts interrupts;
     SymbolTable symbols;
     LLVMState* llvm_state;
+    Stats stats;
 
   public:
-    SharedState(Configuration& config, ConfigParser& cp);
+    SharedState(Environment* env, Configuration& config, ConfigParser& cp);
     ~SharedState();
 
     static void discard(SharedState* ss);
@@ -195,6 +203,20 @@ namespace rubinius {
     void set_kcode_table(kcode::table* tbl, kcode::CodePage page) {
       kcode_table_ = tbl;
       kcode_page_ = page;
+    }
+
+    QueryAgent* agent() {
+      return agent_;
+    }
+
+    void set_agent(QueryAgent* agent) {
+      agent_ = agent;
+    }
+
+    QueryAgent* autostart_agent();
+
+    Environment* env() {
+      return env_;
     }
 
     void scheduler_loop();

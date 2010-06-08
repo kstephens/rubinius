@@ -5,7 +5,7 @@
 #include "helpers.hpp"
 
 #include "capi/capi.hpp"
-#include "capi/ruby.h"
+#include "capi/include/ruby.h"
 
 using namespace rubinius;
 using namespace rubinius::capi;
@@ -40,6 +40,28 @@ extern "C" {
 
     String* str = class_object->name()->to_str(env->state());
     return RSTRING_PTR(env->get_handle(str));
+  }
+
+  VALUE rb_class_inherited(VALUE super_handle, VALUE class_handle)
+  {
+    if(!super_handle) super_handle = rb_cObject;
+    return rb_funcall(super_handle, rb_intern("inherited"), 1, class_handle);
+  }
+
+  VALUE rb_class_new(VALUE super_handle) {
+    NativeMethodEnvironment* env = NativeMethodEnvironment::get();
+
+    if(super_handle == rb_cClass) {
+      rb_raise(rb_eTypeError, "can't make subclass of Class");
+    }
+
+    if(try_as<MetaClass>(env->get_object(super_handle))) {
+      rb_raise(rb_eTypeError, "can't make subclass of virtual class");
+    }
+
+    Class* klass = Class::create(env->state(), c_as<Class>(env->get_object(super_handle)));
+
+    return env->get_handle(klass);
   }
 
   VALUE rb_path2class(const char* name) {

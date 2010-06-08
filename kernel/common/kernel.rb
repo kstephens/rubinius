@@ -269,14 +269,18 @@ module Kernel
   def caller(start=1, exclude_kernel=true)
     ary = []
     Rubinius::VM.backtrace(1)[start..-1].each do |l|
+      if exclude_kernel and l.method.file.to_s.prefix?("kernel/")
+        next
+      end
+
       pos = l.position
-      if !exclude_kernel or !%r!^kernel/!.match(pos)
-        meth = l.describe_method
-        if meth == "__script__"
-          ary << "#{pos}"
-        else
-          ary << "#{pos}:in `#{meth}'"
-        end
+      meth = l.describe_method
+
+      case l.name
+      when :__script__, :__class_init__, :__module_init__
+        ary << pos
+      else
+        ary << "#{pos}:in `#{meth}'"
       end
     end
 
@@ -393,8 +397,8 @@ module Kernel
 
   def extend(*modules)
     modules.reverse_each do |mod|
-      mod.extend_object(self)
-      mod.send(:extended, self)
+      mod.__send__(:extend_object, self)
+      mod.__send__(:extended, self)
     end
     self
   end
@@ -461,6 +465,12 @@ module Kernel
   def remove_instance_variable(sym)
     Ruby.primitive :object_del_ivar
 
+    # If it's already a symbol, then we're here because it doesn't exist.
+    if sym.kind_of? Symbol
+      raise NameError, "instance variable '#{sym}' not defined"
+    end
+
+    # Otherwise because sym isn't a symbol, coerce it and try again.
     remove_instance_variable Rubinius.instance_variable_validate(sym)
   end
   private :remove_instance_variable
@@ -630,6 +640,10 @@ module Kernel
     # HACK we use __send__ here so that the method inliner
     # doesn't accidentally inline a script body into here!
     MAIN.__send__ :__script__
+
+    Rubinius::CodeLoader.loaded_hook.trigger!(name)
+
+    return true
   end
   module_function :load
 

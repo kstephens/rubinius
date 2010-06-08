@@ -32,7 +32,7 @@ namespace jit {
 
     call_frame = b().CreateBitCast(
         cfstk,
-        PointerType::getUnqual(cf_type), "call_frame");
+        llvm::PointerType::getUnqual(cf_type), "call_frame");
 
     info_.set_call_frame(call_frame);
 
@@ -47,13 +47,11 @@ namespace jit {
 
     vars = b().CreateBitCast(
         var_mem,
-        PointerType::getUnqual(stack_vars_type), "vars");
+        llvm::PointerType::getUnqual(stack_vars_type), "vars");
 
     info_.set_variables(vars);
 
     Value* rd = constant(runtime_data_, ls_->ptr_type("jit::RuntimeData"));
-    ls_->ptr_type("jit::RuntimeData)")->dump();
-    rd->dump();
 
     //  Setup the CallFrame
     //

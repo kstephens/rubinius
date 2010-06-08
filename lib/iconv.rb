@@ -4,7 +4,9 @@
 class Iconv
   extend FFI::Library
 
-  ffi_lib FFI::USE_THIS_PROCESS_AS_LIBRARY, "libiconv"
+  # Use libiconv if it exists, otherwise get the symbols from the current
+  # process.
+  ffi_lib ["libiconv", FFI::CURRENT_PROCESS]
 
   attach_function :create,  "iconv_open", [:string, :string], :pointer
   attach_function :close,   "iconv_close", [:pointer], :int

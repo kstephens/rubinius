@@ -15,7 +15,7 @@ module Rubinius
     # being used.
 
     attr_accessor :hints         # added by the VM to indicate how it's being used.
-    attr_accessor :__ivars__
+    attr_accessor :metadata      # [Tuple]   extra data
     attr_accessor :name          # [Symbol]  name of the method
     attr_accessor :iseq          # [Tuple]   instructions to execute
     attr_accessor :stack_size    # [Integer] size of stack at compile time
@@ -144,7 +144,7 @@ module Rubinius
     #
     # @raise [ArgumentError]
     # @param [Fixnum] ip where exactly to place the breakpoint
-    def set_breakpoint(ip)
+    def set_breakpoint(ip, obj)
       Ruby.primitive :compiledmethod_set_breakpoint
       raise ArgumentError, "Unable to set breakpoint on #{inspect} at invalid bytecode address #{ip}"
     end
@@ -206,11 +206,13 @@ module Rubinius
     end
 
     class Script
+      attr_accessor :compiled_method
       attr_accessor :file_path
       attr_accessor :data_path
       attr_accessor :eval_binding
 
-      def initialize(path=nil, for_eval=false)
+      def initialize(method, path=nil, for_eval=false)
+        @compiled_method = method
         @file_path = path
         @for_eval = for_eval
         @eval_binding = nil
@@ -223,7 +225,7 @@ module Rubinius
 
     # Creates the Script instance for a toplevel compiled method.
     def create_script(wrap=false)
-      script = CompiledMethod::Script.new
+      script = CompiledMethod::Script.new(self)
 
       # Setup the scoping.
       ss = StaticScope.new(Object)
@@ -242,6 +244,16 @@ module Rubinius
       VM.reset_method_cache :__script__
 
       script
+    end
+
+    def active_path
+      if @scope and script = @scope.current_script
+        if fp = script.file_path
+          return fp.dup
+        end
+      end
+
+      @file.to_s
     end
 
     ##
@@ -317,7 +329,7 @@ module Rubinius
     #
     # @return [Boolean]
     def is_block?
-      @name =~ /__(?:(?:\w|_)+)?block__/
+      get_metadata(:for_block)
     end
 
     def describe
@@ -343,7 +355,7 @@ module Rubinius
 
       lits = Tuple.new(cm.literals.size)
       cm.literals.each_with_index do |lit, idx|
-        if lit.kind_of? CompiledMethod
+        if lit.kind_of? CompiledMethod and lit.is_block?
           lit = lit.change_name name
         end
 
@@ -470,6 +482,60 @@ module Rubinius
       end
     end
 
+    def add_metadata(key, val)
+      raise TypeError, "key must be a symbol" unless key.kind_of? Symbol
+
+      case val
+      when true, false, Symbol, Fixnum, String
+        # ok
+      else
+        raise TypeError, "invalid type of value"
+      end
+
+      @metadata ||= nil # to deal with MRI seeing @metadata as not set
+
+      unless @metadata
+        @metadata = Tuple.new(2)
+        @metadata[0] = key
+        @metadata[1] = val
+        return val
+      end
+
+      i = 0
+      fin = @metadata.size
+
+      while i < fin
+        if @metadata[i] == key
+          @metadata[i + 1] = val
+          return val
+        end
+
+        i += 2
+      end
+
+      tup = Tuple.create(fin + 2)
+      tup.copy_from @metadata, 0, fin, 0
+      tup[fin] = key
+      tup[fin + 1] = val
+
+      return val
+    end
+
+    def get_metadata(key)
+      return nil unless @metadata.kind_of? Tuple
+
+      i = 0
+      while i < @metadata.size
+        if @metadata[i] == key
+          return @metadata[i + 1]
+        end
+
+        i += 2
+      end
+
+      return nil
+    end
+
     ##
     # Represents virtual machine's CPU instruction.
     # Instructions are organized into instruction
@@ -490,7 +556,7 @@ module Rubinius
           when :local
             # TODO: Blocks should be able to retrieve local names as well,
             # but need access to method corresponding to home context
-            if cm.local_names and cm.name != :__block__
+            if cm.local_names and !cm.is_block?
               @comment = cm.local_names[args[i]].to_s
             end
           when :block_local

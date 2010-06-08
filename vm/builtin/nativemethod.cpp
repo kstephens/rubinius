@@ -18,6 +18,7 @@
 #include "builtin/system.hpp"
 #include "builtin/tuple.hpp"
 #include "builtin/capi_handle.hpp"
+#include "builtin/location.hpp"
 
 #include "instruments/profiler.hpp"
 
@@ -164,7 +165,7 @@ namespace rubinius {
     if(arity >= 0 && (size_t)arity != args.total()) {
       Exception* exc = Exception::make_argument_error(
           state, arity, args.total(), msg.name);
-      exc->locations(state, System::vm_backtrace(state, Fixnum::from(1), call_frame));
+      exc->locations(state, Location::from_call_stack(state, call_frame));
       state->thread_state()->raise_exception(exc);
 
       return NULL;
@@ -211,6 +212,10 @@ namespace rubinius {
     env->set_current_call_frame(saved_frame);
     env->set_current_native_frame(nmf.previous());
     ep.pop(env);
+
+    // Handle any signals that occurred while the native method
+    // was running.
+    if(!state->check_async(call_frame)) return NULL;
 
     return ret;
   }
@@ -342,6 +347,68 @@ namespace rubinius {
       VALUE a5 = env->get_handle(args.get_argument(4));
 
       VALUE ret = functor(receiver, a1, a2, a3, a4, a5);
+
+      return env->get_object(ret);
+    }
+
+    case 6: {
+      SevenArgFunctor functor = functor_as<SevenArgFunctor>();
+      VALUE a1 = env->get_handle(args.get_argument(0));
+      VALUE a2 = env->get_handle(args.get_argument(1));
+      VALUE a3 = env->get_handle(args.get_argument(2));
+      VALUE a4 = env->get_handle(args.get_argument(3));
+      VALUE a5 = env->get_handle(args.get_argument(4));
+      VALUE a6 = env->get_handle(args.get_argument(5));
+
+      VALUE ret = functor(receiver, a1, a2, a3, a4, a5, a6);
+
+      return env->get_object(ret);
+    }
+
+    case 7: {
+      EightArgFunctor functor = functor_as<EightArgFunctor>();
+      VALUE a1 = env->get_handle(args.get_argument(0));
+      VALUE a2 = env->get_handle(args.get_argument(1));
+      VALUE a3 = env->get_handle(args.get_argument(2));
+      VALUE a4 = env->get_handle(args.get_argument(3));
+      VALUE a5 = env->get_handle(args.get_argument(4));
+      VALUE a6 = env->get_handle(args.get_argument(5));
+      VALUE a7 = env->get_handle(args.get_argument(6));
+
+      VALUE ret = functor(receiver, a1, a2, a3, a4, a5, a6, a7);
+
+      return env->get_object(ret);
+    }
+
+    case 8: {
+      NineArgFunctor functor = functor_as<NineArgFunctor>();
+      VALUE a1 = env->get_handle(args.get_argument(0));
+      VALUE a2 = env->get_handle(args.get_argument(1));
+      VALUE a3 = env->get_handle(args.get_argument(2));
+      VALUE a4 = env->get_handle(args.get_argument(3));
+      VALUE a5 = env->get_handle(args.get_argument(4));
+      VALUE a6 = env->get_handle(args.get_argument(5));
+      VALUE a7 = env->get_handle(args.get_argument(6));
+      VALUE a8 = env->get_handle(args.get_argument(7));
+
+      VALUE ret = functor(receiver, a1, a2, a3, a4, a5, a6, a7, a8);
+
+      return env->get_object(ret);
+    }
+
+    case 9: {
+      TenArgFunctor functor = functor_as<TenArgFunctor>();
+      VALUE a1 = env->get_handle(args.get_argument(0));
+      VALUE a2 = env->get_handle(args.get_argument(1));
+      VALUE a3 = env->get_handle(args.get_argument(2));
+      VALUE a4 = env->get_handle(args.get_argument(3));
+      VALUE a5 = env->get_handle(args.get_argument(4));
+      VALUE a6 = env->get_handle(args.get_argument(5));
+      VALUE a7 = env->get_handle(args.get_argument(6));
+      VALUE a8 = env->get_handle(args.get_argument(7));
+      VALUE a9 = env->get_handle(args.get_argument(8));
+
+      VALUE ret = functor(receiver, a1, a2, a3, a4, a5, a6, a7, a8, a9);
 
       return env->get_object(ret);
     }

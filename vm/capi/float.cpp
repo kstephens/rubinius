@@ -1,5 +1,5 @@
 #include "capi/capi.hpp"
-#include "capi/ruby.h"
+#include "capi/include/ruby.h"
 
 #include "builtin/float.hpp"
 
@@ -12,7 +12,7 @@ namespace rubinius {
     Float* capi_get_float(NativeMethodEnvironment* env, VALUE float_handle) {
       Handle* handle = Handle::from(float_handle);
       handle->flush(env);
-      return c_as<Float>(handle->object());
+      return as<Float>(handle->object());
     }
 
     void flush_cached_rfloat(NativeMethodEnvironment* env, Handle* handle) {

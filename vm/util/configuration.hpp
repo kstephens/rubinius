@@ -22,6 +22,18 @@ namespace config {
     bool import(const char* key, const char* val);
     void print(bool desc=false);
     ConfigItem* find(const char* key);
+
+    size_t items_size() {
+      return items_.size();
+    }
+
+    Items::iterator items_begin() {
+      return items_.begin();
+    }
+
+    Items::iterator items_end() {
+      return items_.end();
+    }
   };
 
   class ConfigItem {
@@ -112,7 +124,11 @@ namespace config {
     }
 
     virtual void print_value(std::ostream& stream) {
-      stream << value;
+      if(value.size() == 0) {
+        stream << "\"\"";
+      } else {
+        stream << value;
+      }
     }
 
     operator const char*() {

@@ -6,7 +6,7 @@
 #include "dispatch.hpp"
 
 #include "capi/capi.hpp"
-#include "capi/ruby.h"
+#include "capi/include/ruby.h"
 
 #include <stdarg.h>
 
@@ -125,6 +125,10 @@ extern "C" {
 
   VALUE rb_ary_clear(VALUE self_handle) {
     return rb_funcall2(self_handle, rb_intern("clear"), 0, NULL);
+  }
+
+  VALUE rb_ary_delete(VALUE self_handle, VALUE item) {
+    return rb_funcall(self_handle, rb_intern("delete"), 1, item);
   }
 
   VALUE rb_ary_dup(VALUE self_handle) {
@@ -296,4 +300,27 @@ extern "C" {
   VALUE rb_ary_aref(int argc, VALUE *argv, VALUE self_handle) {
     return rb_funcall2(self_handle, rb_intern("[]"), argc, argv);
   }
+
+  // Really just used as a placeholder/sentinal value to half implement
+  // rb_iterate
+  VALUE rb_each(VALUE ary) {
+    rb_raise(rb_eArgError, "rb_each not fully supported", 0);
+    return Qnil;
+  }
+
+  VALUE rb_iterate(VALUE(*ifunc)(VALUE), VALUE ary, VALUE(*cb)(ANYARGS), VALUE cb_data) {
+    NativeMethodEnvironment* env = NativeMethodEnvironment::get();
+
+    if(ifunc != rb_each || !kind_of<Array>(env->get_object(ary))) {
+      rb_raise(rb_eArgError, "rb_iterate only supported with rb_each and an Array");
+      return Qnil;
+    }
+
+    for(size_t i = 0; i < rb_ary_size(ary); i++) {
+      (*cb)(rb_ary_entry(ary, i), cb_data, Qnil);
+    }
+
+    return ary;
+  }
+
 }

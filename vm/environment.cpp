@@ -54,7 +54,7 @@ namespace rubinius {
 
     VM::init_stack_size();
 
-    shared = new SharedState(config, config_parser);
+    shared = new SharedState(this, config, config_parser);
     state = shared->new_vm();
   }
 
@@ -153,7 +153,7 @@ namespace rubinius {
       break;
     }
 
-    exit(1);
+    _exit(1);
   }
 
   void Environment::start_signals() {
@@ -218,8 +218,6 @@ namespace rubinius {
 
     // Now finish up with the config
 
-    if(config.qa_port > 0) start_agent(config.qa_port);
-
     config_parser.update_configuration(config);
 
     if(config.print_config > 1) {
@@ -229,6 +227,17 @@ namespace rubinius {
     } else if(config.print_config) {
       config.print();
     }
+
+    if(config.qa_port > 0) {
+      // if port_ is 1, the user wants to use a randomly assigned local
+      // port which will be written to the temp file for console to pick
+      // up.
+
+      int port = config.qa_port;
+      if(port == 1) port = 0;
+      start_agent(port);
+    }
+
   }
 
   void Environment::load_directory(std::string dir) {
@@ -362,8 +371,13 @@ namespace rubinius {
   }
 
   void Environment::start_agent(int port) {
-    agent = new QueryAgent(*shared, port);
+    agent = new QueryAgent(*shared, state);
     if(config.qa_verbose) agent->set_verbose();
+
+    if(!agent->bind(port)) return;
+
+    shared->set_agent(agent);
+
     agent->run();
   }
 

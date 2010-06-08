@@ -181,7 +181,7 @@ namespace rubinius {
     state->thread->sleep(state, Qtrue);
 
     {
-      GlobalLock::UnlockGuard lock(state->global_lock());
+      GlobalLock::UnlockGuard lock(state, calling_environment);
 
       events = ::select((highest + 1), maybe_read_set,
                                                   maybe_write_set,
@@ -234,6 +234,29 @@ namespace rubinius {
     if(dup2(other_fd, cur_fd) == -1) {
       Exception::errno_error(state, "reopen");
       return NULL;
+    }
+
+    set_mode(state);
+    if(IOBuffer* ibuf = try_as<IOBuffer>(ibuffer())) {
+      ibuf->reset(state);
+    }
+
+    return Qtrue;
+  }
+
+  Object* IO::reopen_path(STATE, String* path, Fixnum* mode) {
+    native_int cur_fd   = to_fd();
+
+    int other_fd = ::open(path->c_str(), mode->to_native(), 0666);
+
+    if(dup2(other_fd, cur_fd) == -1) {
+      if(errno == EBADF) { // this means cur_fd is closed
+        // Just set ourselves to use the new fd and go on with life.
+        descriptor(state, Fixnum::from(other_fd));
+      } else {
+        Exception::errno_error(state, "reopen");
+        return NULL;
+      }
     }
 
     set_mode(state);
@@ -420,7 +443,7 @@ namespace rubinius {
     state->thread->sleep(state, Qtrue);
 
     {
-      GlobalLock::UnlockGuard lock(state->global_lock());
+      GlobalLock::UnlockGuard lock(state, calling_environment);
       bytes_read = ::read(fd, buffer->byte_address(), count);
     }
 
@@ -489,15 +512,77 @@ namespace rubinius {
     return buffer;
   }
 
-  Object* IO::write(STATE, String* buf) {
-    ssize_t cnt = ::write(this->to_fd(), buf->byte_address(), buf->size());
+  Object* IO::write(STATE, String* buf, CallFrame* call_frame) {
+    uint8_t* bytes = buf->byte_address();
+    size_t left = buf->size();
 
-    if(cnt == -1) {
+    while(left > 0) {
+      ssize_t cnt = ::write(this->to_fd(), bytes, left);
+      if(cnt == -1) {
+        if(call_frame) {
+          switch(errno) {
+          case EINTR:
+          case EAGAIN:
+            return unlocked_write(state, buf, call_frame);
+          }
+        }
+        Exception::errno_error(state);
+        return NULL;
+      }
+
+      left -= cnt;
+      bytes += cnt;
+    }
+
+    return Integer::from(state, buf->size() - left);
+  }
+
+  Object* IO::unlocked_write(STATE, String* buf, CallFrame* call_frame) {
+    size_t left = buf->size();
+    uint8_t* bytes = new uint8_t[left];
+    memcpy(bytes, buf->byte_address(), left);
+    int fd = this->to_fd();
+    bool error = false;
+
+    {
+      GlobalLock::UnlockGuard guard(state, call_frame);
+
+      uint8_t* cur = bytes;
+      while(left > 0) {
+        ssize_t cnt = ::write(fd, cur, left);
+
+        if(cnt == -1) {
+          switch(errno) {
+          case EINTR:
+          case EAGAIN: {
+            // Pause before continuing
+            fd_set fds;
+            FD_ZERO(&fds);
+            FD_SET(fd, &fds);
+
+            ::select(fd+1, &fds, NULL, NULL, NULL);
+
+            continue;
+          }
+          default:
+            error = true;
+            break;
+          }
+        }
+
+        left -= cnt;
+        cur  += cnt;
+      }
+    }
+
+    delete[] bytes;
+
+    if(error) {
       Exception::errno_error(state);
       return NULL;
     }
 
-    return Integer::from(state, cnt);
+    return Integer::from(state, buf->size() - left);
   }
 
   Object* IO::blocking_read(STATE, Fixnum* bytes) {
@@ -604,7 +689,7 @@ namespace rubinius {
     state->thread->sleep(state, Qtrue);
 
     {
-      GlobalLock::UnlockGuard lock(state->global_lock());
+      GlobalLock::UnlockGuard lock(state, calling_environment);
       bytes_read = recvfrom(descriptor()->to_native(),
                             buffer->byte_address(), size,
                             flags->to_native(),
@@ -873,7 +958,7 @@ failed: /* try next '*' position */
     state->thread->sleep(state, Qtrue);
 
     {
-      GlobalLock::UnlockGuard lock(state->global_lock());
+      GlobalLock::UnlockGuard lock(state, calling_environment);
       new_fd = ::accept(fd, (struct sockaddr*)&socka, &sock_len);
       set = true;
     }
@@ -960,7 +1045,7 @@ failed: /* try next '*' position */
     state->thread->sleep(state, Qtrue);
 
     {
-      GlobalLock::UnlockGuard lock(state->global_lock());
+      GlobalLock::UnlockGuard lock(state, calling_environment);
       bytes_read = read(fd, temp_buffer, count);
     }
 
@@ -968,13 +1053,20 @@ failed: /* try next '*' position */
     state->clear_waiter();
 
     if(bytes_read == -1) {
-      if(errno == EAGAIN || errno == EINTR) {
+      switch(errno) {
+      case ECONNRESET:
+      case ETIMEDOUT:
+        // Treat as seeing eof
+        bytes_read = 0;
+        break;
+      case EAGAIN:
+      case EINTR:
         if(state->check_async(calling_environment)) goto retry;
-      } else {
+        return NULL;
+      default:
         Exception::errno_error(state, "read(2) failed");
+        return NULL;
       }
-
-      return NULL;
     }
 
     if(bytes_read > 0) {

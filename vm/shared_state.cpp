@@ -12,6 +12,8 @@
 #include "inline_cache.hpp"
 #include "configuration.hpp"
 
+#include "agent.hpp"
+
 namespace rubinius {
 
   class WorldState {
@@ -73,7 +75,7 @@ namespace rubinius {
       // For ourself..
       pending_threads_--;
 
-      timer::Running timer(time_waiting_);
+      timer::Running<uint64_t> timer(time_waiting_);
 
       while(pending_threads_ > 0) {
         waiting_to_stop_.wait(mutex_);
@@ -112,7 +114,7 @@ namespace rubinius {
     }
   };
 
-  SharedState::SharedState(Configuration& config, ConfigParser& cp)
+  SharedState::SharedState(Environment* env, Configuration& config, ConfigParser& cp)
     : initialized_(false)
     , signal_handler_(0)
     , global_handles_(new capi::Handles)
@@ -124,6 +126,9 @@ namespace rubinius {
     , ic_registry_(new InlineCacheRegistry)
     , class_count_(0)
     , timer_thread_started_(false)
+    , agent_(0)
+    , root_vm_(0)
+    , env_(env)
     , om(0)
     , global_cache(new GlobalCache)
     , config(config)
@@ -173,6 +178,9 @@ namespace rubinius {
     threads_.push_back(vm);
 
     this->ref();
+
+    // If there is no root vm, then the first on created becomes it.
+    if(!root_vm_) root_vm_ = vm;
     return vm;
   }
 
@@ -182,6 +190,12 @@ namespace rubinius {
     this->deref();
 
     // Don't delete ourself here, it's too problematic.
+  }
+
+  QueryAgent* SharedState::autostart_agent() {
+    if(agent_) return agent_;
+    agent_ = new QueryAgent(*this, root_vm_);
+    return agent_;
   }
 
   void SharedState::enable_profiling(VM* vm) {

@@ -1,3 +1,4 @@
+# vim: filetype=ruby
 require 'spec/custom/utils/script'
 
 class MSpecScript
@@ -50,7 +51,7 @@ class MSpecScript
 
   # An ordered list of the directories containing specs to run
   set :files, get(:language) + get(:core) + get(:library) +
-              get(:capi) + get(:compiler) + get(:build)
+              get(:capi) + get(:compiler) + get(:build) + get(:command_line)
 
   set :ruby, [
     'spec/ruby/language',
@@ -76,24 +77,36 @@ class MSpecScript
   set :ci_files, [
     'spec/ruby/core',
     'spec/ruby/language',
+    'spec/ruby/command_line',
     'spec/core',
+    'spec/language',
     'spec/compiler',
     'spec/command_line',
     'spec/capi',
-    'spec/ruby/library/digest',
+    'spec/ruby/library',
+    'spec/library',
 
     'spec/build',
 
-    '^spec/core/compiledmethod',
-    '^spec/core/module',
+    # Excluded because these require access to raw C functions,
+    # which is not implemented at this time.
     '^spec/capi/globals',
-    '^spec/capi/module',
     '^spec/capi/proc',
-    '^spec/capi/struct',
 
-    # These additional directories will be enabled as the
-    # specs in them are updated for the C++ VM.
-    # 'spec/debugger',
+    # Excluded because the specs are extremely system dependent.
+    '^spec/ruby/library/syslog',
+
+    # 1.9 features
+    '^spec/ruby/library/cmath',
+    '^spec/ruby/library/continuation',
+    '^spec/ruby/library/coverage',
+    '^spec/ruby/library/fiber',
+    '^spec/ruby/library/json',
+    '^spec/ruby/library/minitest',
+    '^spec/ruby/library/prime',
+    '^spec/ruby/library/ripper',
+    '^spec/ruby/library/rake',
+    '^spec/ruby/library/rubygems',
   ]
 
   # The set of substitutions to transform a spec filename

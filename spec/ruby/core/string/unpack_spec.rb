@@ -100,6 +100,10 @@ describe "String#unpack with 'C' and 'c' directives" do
     "\x80\x02\x00\x42\xFF\x87\xF3\x00".unpack('c*').should == [-128, 2, 0, 66, -1, -121, -13, 0]
     "\xF3\x02\x00\x42\x32\x87\xF3\x02".unpack('c0C*').should == [243, 2, 0, 66, 50, 135, 243, 2]
   end
+
+  it "decodes respective of the already decoded data" do
+    "\0\0\0\1hello".unpack("iC5").last.should == 111
+  end
 end
 
 describe "String#unpack with 'Q' and 'q' directives" do
@@ -369,10 +373,24 @@ describe "String#unpack with 'IiLlSs' directives" do
       "\377\377\377\377".unpack("I").should == [4294967295]
       "\000\000\000\000\000\000\000\000".unpack("I*").should == [0,0]
     end
+    big_endian do
+      "\000\001\000\000".unpack("i").should == [65536]
+      "\000\001\000\000\000\001\000\000".unpack("i2").should == [65536, 65536]
+      "\000\001\000\000\000\001\000\000hello".unpack("i2a5").should == [65536, 65536, "hello"]
+      "\377\377\377\377".unpack("i").should == [-1]
+      "\377\377\377\377".unpack("I").should == [4294967295]
+      "\000\000\000\000\000\000\000\000".unpack("I*").should == [0,0]
+    end
   end
 
   it "ignores the result if there aren't 4 bytes" do
     little_endian do
+      "\000".unpack("I").should == [nil]
+      "\000".unpack("I2").should == [nil, nil]
+      "\000".unpack("I*").should == []
+      "\000\000\000\000\000\000\000\000\000".unpack("I*").should == [0,0]
+    end
+    big_endian do
       "\000".unpack("I").should == [nil]
       "\000".unpack("I2").should == [nil, nil]
       "\000".unpack("I*").should == []
@@ -390,10 +408,23 @@ describe "String#unpack with 'lL'" do
       "\377\377\377\377".unpack("l").should == [-1]
       "\377\377\377\377".unpack("L").should == [4294967295]
     end
+    big_endian do
+      "\000\001\000\000".unpack("l").should == [65536]
+      "\000\001\000\000\000\001\000\000".unpack("l2").should == [65536, 65536]
+      "\000\001\000\000\000\001\000\000hello".unpack("l2a5").should == [65536, 65536, "hello"]
+      "\377\377\377\377".unpack("l").should == [-1]
+      "\377\377\377\377".unpack("L").should == [4294967295]
+    end
   end
 
   it "ignores the result if there aren't 4 bytes" do
     little_endian do
+      "\000".unpack("L").should == [nil]
+      "\000".unpack("L2").should == [nil, nil]
+      "\000".unpack("L*").should == []
+      "\000\000\000\000\000\000\000\000\000".unpack("I*").should == [0,0]
+    end
+    big_endian do
       "\000".unpack("L").should == [nil]
       "\000".unpack("L2").should == [nil, nil]
       "\000".unpack("L*").should == []

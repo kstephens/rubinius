@@ -18,7 +18,7 @@
 #include "builtin/fiber.hpp"
 #include "builtin/string.hpp"
 #include "builtin/lookuptable.hpp"
-#include "builtin/memorypointer.hpp"
+#include "builtin/ffi_pointer.hpp"
 #include "builtin/data.hpp"
 #include "builtin/dir.hpp"
 
@@ -487,6 +487,18 @@ namespace rubinius {
       i = to_finalize_.erase(i);
     }
 
+  }
+
+  size_t& ObjectMemory::loe_usage() {
+    return mark_sweep_->allocated_bytes;
+  }
+
+  size_t& ObjectMemory::immix_usage() {
+    return immix_->bytes_allocated();
+  }
+
+  size_t& ObjectMemory::code_usage() {
+    return (size_t&)code_manager_.size();
   }
 
   void ObjectMemory::memstats() {

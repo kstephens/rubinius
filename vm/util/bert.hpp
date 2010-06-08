@@ -1,7 +1,12 @@
+#ifndef RBX_UTIL_BERT
+#define RBX_UTIL_BERT
+
 #include <errno.h>
 #include <unistd.h>
 #include <assert.h>
 #include <stdlib.h>
+#include <arpa/inet.h>
+#include <string.h>
 
 #include <cstdio>
 #include <ostream>
@@ -580,12 +585,24 @@ namespace bert {
       return term_;
     }
 
+    bool integer_p() {
+      return type_ == Integer;
+    }
+
     int integer() {
       return term_->integer();
     }
 
+    bool float_p() {
+      return type_ == Float;
+    }
+
     double float_number() {
       return term_->float_number();
+    }
+
+    bool string_p() {
+      return type_ == Binary;
     }
 
     char* string() {
@@ -1124,6 +1141,11 @@ namespace bert {
       bzr_.write_binary(data, size);
     }
 
+    void raw_write(const char* data, int size = -1) {
+      if(size == -1) size = strlen(data);
+      writer_.write(size, data);
+    }
+
     void write_tuple(int size) {
       bzr_.write_tuple(size);
     }
@@ -1167,3 +1189,5 @@ namespace bert {
     }
   };
 }
+
+#endif

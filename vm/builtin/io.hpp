@@ -90,10 +90,15 @@ namespace rubinius {
     Integer* seek(STATE, Integer* amount, Fixnum* whence);
 
     // Ruby.primitive :io_write
-    Object* write(STATE, String* buf);
+    Object* write(STATE, String* buf, CallFrame* calling_environment);
+
+    Object* unlocked_write(STATE, String* buf, CallFrame* calling_environment);
 
     // Ruby.primitive :io_reopen
     Object* reopen(STATE, IO* other);
+
+    // Ruby.primitive :io_reopen_path
+    Object* reopen_path(STATE, String* other, Fixnum * mode);
 
     // Ruby.primitive :io_close
     Object* close(STATE);

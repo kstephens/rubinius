@@ -8,6 +8,7 @@
 #include "builtin/string.hpp"
 #include "builtin/symbol.hpp"
 #include "builtin/system.hpp"
+#include "builtin/location.hpp"
 
 #include "lookup_data.hpp"
 #include "dispatch.hpp"
@@ -19,7 +20,7 @@
 #include "arguments.hpp"
 #include "dispatch.hpp"
 #include "capi/capi.hpp"
-#include "capi/ruby.h"
+#include "capi/include/ruby.h"
 #include <string>
 #include <vector>
 #include <tr1/unordered_map>
@@ -144,7 +145,8 @@ namespace rubinius {
         NativeMethodEnvironment* env,
         const char* file, int line,
         Object* recv, Symbol* method, std::size_t arg_count,
-        Object** args)
+        Object** args,
+        Object* block)
     {
       int marker = 0;
       if(!env->state()->check_stack(env->current_call_frame(), &marker)) {
@@ -154,7 +156,7 @@ namespace rubinius {
       env->flush_cached_data();
 
       LookupData lookup(recv, recv->lookup_begin(env->state()), true);
-      Arguments args_o(recv, arg_count, args);
+      Arguments args_o(recv, block, arg_count, args);
       Dispatch dis(method);
 
       Object* ret = dis.send(env->state(), env->current_call_frame(),
@@ -255,8 +257,8 @@ namespace rubinius {
 
     void capi_raise_backend(Exception* exception) {
       NativeMethodEnvironment* env = NativeMethodEnvironment::get();
-      exception->locations(env->state(), System::vm_backtrace(env->state(),
-          Fixnum::from(0), env->current_call_frame()));
+      exception->locations(env->state(), Location::from_call_stack(env->state(),
+                           env->current_call_frame()));
       env->state()->thread_state()->raise_exception(exception);
 
       env->current_ep()->return_to(env);
@@ -315,7 +317,7 @@ extern "C" {
     return capi_funcall_backend_native(env, "", 0,
         env->get_object(receiver),
         reinterpret_cast<Symbol*>(method_name),
-        arg_count, args);
+        arg_count, args, RBX_Qnil);
   }
 
   VALUE rb_funcall2(VALUE receiver, ID method_name, int arg_count, const VALUE* v_args) {
@@ -330,7 +332,23 @@ extern "C" {
     return capi_funcall_backend_native(env, "", 0,
         env->get_object(receiver),
         reinterpret_cast<Symbol*>(method_name),
-        arg_count, args);
+        arg_count, args, RBX_Qnil);
+  }
+
+  VALUE rb_funcall2b(VALUE receiver, ID method_name, int arg_count,
+                     const VALUE* v_args, VALUE block) {
+    NativeMethodEnvironment* env = NativeMethodEnvironment::get();
+
+    Object** args = reinterpret_cast<Object**>(alloca(sizeof(Object**) * arg_count));
+
+    for(int i = 0; i < arg_count; i++) {
+      args[i] = env->get_object(v_args[i]);
+    }
+
+    return capi_funcall_backend_native(env, "", 0,
+        env->get_object(receiver),
+        reinterpret_cast<Symbol*>(method_name),
+        arg_count, args, env->get_object(block));
   }
 
   void capi_infect(VALUE obj1, VALUE obj2) {
@@ -354,7 +372,7 @@ extern "C" {
     env->get_object(obj)->taint(env->state());
   }
 
-  int capi_tainted_p(VALUE obj) {
+  int rb_obj_tainted(VALUE obj) {
     NativeMethodEnvironment* env = NativeMethodEnvironment::get();
 
     Object* tainted = env->get_object(obj)->tainted_p(env->state());

@@ -1,7 +1,7 @@
 #include "builtin/object.hpp"
 
 #include "capi/capi.hpp"
-#include "capi/ruby.h"
+#include "capi/include/ruby.h"
 
 using namespace rubinius;
 using namespace rubinius::capi;
@@ -55,6 +55,10 @@ extern "C" {
                       2,
                       env->get_handle(prefixed_by(env->state(), '$', rb_intern(name))),
                       value);
+  }
+
+  VALUE rb_f_global_variables() {
+    return rb_funcall(rb_mKernel, rb_intern("global_variables"), 0);
   }
 
   void rb_define_readonly_variable(const char* name, VALUE* addr) {

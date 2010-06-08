@@ -38,6 +38,7 @@
 #include "builtin/taskprobe.hpp"
 #include "builtin/float.hpp"
 #include "builtin/methodtable.hpp"
+#include "builtin/io.hpp"
 
 #include "builtin/staticscope.hpp"
 #include "builtin/block_environment.hpp"
@@ -51,6 +52,8 @@
 #include "configuration.hpp"
 
 #include "inline_cache.hpp"
+
+#include "agent.hpp"
 
 #ifdef ENABLE_LLVM
 #include "llvm/jit.hpp"
@@ -149,7 +152,8 @@ namespace rubinius {
     return NULL;
   }
 
-  Object* System::vm_wait_pid(STATE, Fixnum* pid_obj, Object* no_hang) {
+  Object* System::vm_wait_pid(STATE, Fixnum* pid_obj, Object* no_hang,
+                              CallFrame* calling_environment) {
     pid_t input_pid = pid_obj->to_native();
     int options = 0;
     int status;
@@ -162,7 +166,7 @@ namespace rubinius {
   retry:
 
     {
-      GlobalLock::UnlockGuard lock(state->global_lock());
+      GlobalLock::UnlockGuard lock(state, calling_environment);
       pid = waitpid(input_pid, &status, options);
     }
 
@@ -312,25 +316,17 @@ namespace rubinius {
    /*  @todo Could possibly capture the system backtrace at this
    *        point. --rue
    */
-  Array* System::vm_backtrace(STATE, Fixnum* skip, CallFrame* calling_environment) {
+  Array* System::vm_backtrace(STATE, Fixnum* skip, Object* inc_vars,
+                              CallFrame* calling_environment) {
     CallFrame* call_frame = calling_environment;
+
+    bool include_vars = RTEST(inc_vars);
 
     for(native_int i = skip->to_native(); call_frame && i > 0; --i) {
       call_frame = static_cast<CallFrame*>(call_frame->previous);
     }
 
-    Array* bt = Array::create(state, 5);
-
-    while(call_frame) {
-      // Ignore synthetic frames
-      if(call_frame->cm) {
-        bt->append(state, Location::create(state, call_frame));
-      }
-
-      call_frame = static_cast<CallFrame*>(call_frame->previous);
-    }
-
-    return bt;
+    return Location::from_call_stack(state, call_frame, include_vars);
   }
 
   Object* System::vm_show_backtrace(STATE, CallFrame* calling_environment) {
@@ -401,7 +397,13 @@ namespace rubinius {
   Object* System::vm_watch_signal(STATE, Fixnum* sig) {
     SignalHandler* h = state->shared.signal_handler();
     if(h) {
-      h->add_signal(sig->to_native());
+      native_int i = sig->to_native();
+      if(i < 0) {
+        h->add_signal(-i, true);
+      } else {
+        h->add_signal(i);
+      }
+
       return Qtrue;
     } else {
       return Qfalse;
@@ -580,7 +582,6 @@ namespace rubinius {
   Object* System::vm_jit_block(STATE, BlockEnvironment* env, Object* show) {
 #ifdef ENABLE_LLVM
     LLVMState* ls = LLVMState::get(state);
-    timer::Running timer(ls->time_spent);
 
     VMMethod* vmm = env->vmmethod(state);
 
@@ -833,5 +834,23 @@ namespace rubinius {
 
     endpwent();
     return home;
+  }
+
+  IO* System::vm_agent_io(STATE) {
+    QueryAgent* agent = state->shared.autostart_agent();
+    int sock = agent->loopback_socket();
+    if(sock < 0) {
+      if(!agent->setup_local()) return (IO*)Qnil;
+      if(agent->running()) {
+        agent->wakeup();
+      } else {
+        agent->run();
+      }
+
+      sock = agent->loopback_socket();
+    }
+
+    // dup the descriptor so the lifetime of socket is properly controlled.
+    return IO::create(state, dup(sock));
   }
 }

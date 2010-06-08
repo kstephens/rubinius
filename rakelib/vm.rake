@@ -105,7 +105,7 @@ field_extract_headers = %w[
   vm/builtin/iseq.hpp
   vm/builtin/list.hpp
   vm/builtin/lookuptable.hpp
-  vm/builtin/memorypointer.hpp
+  vm/builtin/ffi_pointer.hpp
   vm/builtin/methodtable.hpp
   vm/builtin/nativefunction.hpp
   vm/builtin/packed_object.hpp
@@ -131,6 +131,11 @@ field_extract_headers = %w[
   vm/builtin/fiber.hpp
   vm/builtin/thunk.hpp
 ]
+
+# TODO: all external libraries should have proper dependencies.
+libgdtoa_files = FileList["vm/external_libs/libgdtoa/*.[ch]"]
+
+file "vm/external_libs/libgdtoa/libgdtoa.a" => libgdtoa_files
 
 EXTERNALS   = %W[ vm/external_libs/libtommath/libtommath.a
                   vm/external_libs/libgdtoa/libgdtoa.a
@@ -195,7 +200,7 @@ if ENV['DEV']
 end
 
 def compile_c(obj, src, output_kind="c")
-  flags = INCLUDES + FLAGS + llvm_flags
+  flags = llvm_flags + INCLUDES + FLAGS
 
   if CONFIG.compile_with_llvm
     flags << "-emit-llvm"
@@ -233,6 +238,7 @@ def ld(t)
 
   link_opts += ' -Wl,--export-dynamic' if RUBY_PLATFORM =~ /linux/i
   link_opts += ' -rdynamic'            if RUBY_PLATFORM =~ /bsd/
+  link_opts += ' -lstdc++'
 
   # Include LDFLAGS
   if str = ENV['LDFLAGS']
@@ -299,7 +305,10 @@ namespace :build do
   desc "Generate dependency file"
   task :depends     => dep_file
 
-  import dep_file
+  # Stupid rake.
+  unless Rake.application.top_level_tasks.include? "clean"
+    import dep_file
+  end
 
   desc "Build LLVM"
   task :llvm do
@@ -616,9 +625,6 @@ namespace :vm do
     end
   end
 
-  # TODO: for ryan: fix up dependencies between rubypp and the source files now that they're persistent
-  # TODO: for ryan: dependencies on vm/test/test_instructions.hpp causes rebuild of vm/*.cpp files. lame
-
   desc "Clean up vm build files"
   task :clean do
     files = FileList[
@@ -680,7 +686,7 @@ object_sources = srcs + vm_srcs + generated
 file dep_file => hdrs + object_sources do |t|
   warn "Updating dependencies..."
 
-  directories = ".", "vm", "vm/capi"
+  directories = ".", "vm", "vm/capi/include"
   defines = FLAGS.join ' '
   defines.slice!(/-Wno-deprecated/)
 

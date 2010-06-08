@@ -103,63 +103,53 @@ class Module
 
   alias_method :inspect, :to_s
 
-  def lookup_method(sym)
+  def lookup_method(sym, check_object_too=true, trim_im=true)
     mod = self
 
     while mod
       if entry = mod.method_table.lookup(sym.to_sym)
-        mod = mod.module if mod.kind_of? Rubinius::IncludedModule
+        mod = mod.module if trim_im and mod.kind_of? Rubinius::IncludedModule
         return [mod, entry]
       end
 
       mod = mod.direct_superclass
     end
 
-    # Always also search Object (and everything included in Object).
-    # This lets a module alias methods on Kernel.
-    if instance_of?(Module) and self != Kernel
-      return Object.lookup_method(sym)
+    # Optionally also search Object (and everything included in Object);
+    # this lets a module alias methods on Object or Kernel.
+    if check_object_too and instance_of?(Module)
+      return Object.lookup_method(sym, true, trim_im)
     end
   end
 
-  def find_method_in_hierarchy(sym)
-    mod = self
-
-    while mod
-      if entry = mod.method_table.lookup(sym.to_sym)
-        return entry
-      end
-
-      mod = mod.direct_superclass
-    end
-
-    # Always also search Object (and everything included in Object).
-    # This lets a module alias methods on Kernel.
-    if instance_of?(Module) and self != Kernel
-      return Object.find_method_in_hierarchy(sym)
-    end
-  end
-
-  def ancestors
+  def _each_ancestor
     if kind_of? Class and __metaclass_object__
-      out = []
+      # nothing
     else
-      out = [self]
+      yield self
     end
 
     sup = direct_superclass()
     while sup
       if sup.kind_of? Rubinius::IncludedModule
-        out << sup.module
+        yield sup.module
       elsif sup.kind_of? Class
-        out << sup unless sup.__metaclass_object__
+        yield sup unless sup.__metaclass_object__
       else
-        out << sup
+        yield sup
       end
       sup = sup.direct_superclass()
     end
+  end
+
+  private :_each_ancestor
+
+  def ancestors
+    out = []
+    _each_ancestor { |mod| out << mod }
     return out
   end
+
 
   def superclass_chain
     out = []
@@ -170,24 +160,6 @@ class Module
     end
 
     return out
-  end
-
-  def find_class_method_in_hierarchy(sym)
-    Rubinius.object_metaclass(self).find_method_in_hierarchy(sym)
-  end
-
-  def remote_alias(new_name, mod, current_name)
-    entry = mod.find_method_in_hierarchy(current_name)
-    unless entry
-      raise NameError, "Unable to find method '#{current_name}' under #{mod}"
-    end
-
-    meth = entry.method
-
-    @method_table.store new_name, entry.method, entry.visibility
-    Rubinius::VM.reset_method_cache(new_name)
-
-    return new_name
   end
 
   def undef_method(*names)
@@ -236,27 +208,27 @@ class Module
   end
 
   def public_method_defined?(sym)
-    sym = Type.coerce_to_symbol sym
-    m = find_method_in_hierarchy sym
-    m ? m.public? : false
+    sym = Type.coerce_to_symbol(sym)
+    mod, meth = lookup_method(sym, false)
+    meth ? meth.public? : false
   end
 
   def private_method_defined?(sym)
-    sym = Type.coerce_to_symbol sym
-    m = find_method_in_hierarchy sym
-    m ? m.private? : false
+    sym = Type.coerce_to_symbol(sym)
+    mod, meth = lookup_method(sym, false)
+    meth ? meth.private? : false
   end
 
   def protected_method_defined?(sym)
-    sym = Type.coerce_to_symbol sym
-    m = find_method_in_hierarchy sym
-    m ? m.protected? : false
+    sym = Type.coerce_to_symbol(sym)
+    mod, meth = lookup_method(sym, false)
+    meth ? meth.protected? : false
   end
 
   def method_defined?(sym)
     sym = Type.coerce_to_symbol(sym)
-    m = find_method_in_hierarchy sym
-    m ? m.public? || m.protected? : false
+    mod, meth = lookup_method(sym, false)
+    meth ? meth.public? || meth.protected? : false
   end
 
   ##
@@ -387,7 +359,12 @@ class Module
     if !mod.kind_of?(Module) or mod.kind_of?(Class)
       raise TypeError, "wrong argument type #{mod.class} (expected Module)"
     end
-    ancestors.include? mod
+
+    return false if self.equal?(mod)
+
+    _each_ancestor { |m| return true if mod.equal?(m) }
+
+    false
   end
 
   def included_modules
@@ -411,7 +388,7 @@ class Module
 
     if entry = @method_table.lookup(name)
       entry.visibility = vis
-    elsif find_method_in_hierarchy(name)
+    elsif lookup_method(name)
       @method_table.store name, nil, vis
     else
       raise NoMethodError, "Unknown #{where}method '#{name}' to make #{vis.to_s} (#{self})"
@@ -565,8 +542,13 @@ class Module
     unless other.kind_of? Module
       raise TypeError, "compared with non class/module"
     end
+
+    # We're not an ancestor of ourself
     return false if self.equal? other
-    ancestors.index(other) && true
+
+    _each_ancestor { |mod| return true if mod.equal?(other) }
+
+    nil
   end
 
   def <=(other)

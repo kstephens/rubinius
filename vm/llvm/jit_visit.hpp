@@ -192,7 +192,7 @@ namespace rubinius {
 
       global_serial_pos = b().CreateIntToPtr(
           ConstantInt::get(ls_->IntPtrTy, (intptr_t)ls_->shared().global_serial_address()),
-          PointerType::getUnqual(ls_->IntPtrTy), "cast_to_intptr");
+          llvm::PointerType::getUnqual(ls_->IntPtrTy), "cast_to_intptr");
 
       init_out_args();
     }
@@ -367,6 +367,26 @@ namespace rubinius {
       flush_stack();
     }
 
+    /* push a global constant onto the stack */
+    /* 0:cpath_top, 1:rubinius */
+    void push_system_object(int which) {
+      // we're calling something that returns an Object
+      Signature sig(ls_, ObjType);
+      // given a system state and a 32bit int
+      sig << VMTy;
+      sig << ls_->Int32Ty;
+
+      // the actual values of which are the calling arguments
+      Value* call_args[] = {
+        vm_,
+        ConstantInt::get(ls_->Int32Ty, which)
+      };
+
+      // call the function we just described using the builder
+      Value* val = sig.call("rbx_push_system_object", call_args, 2, "so", b());
+      stack_push(val);
+    }
+
     // visitors.
 
     void visit(opcode op, opcode arg1, opcode arg2) {
@@ -431,7 +451,7 @@ namespace rubinius {
         set_block(end_profiling);
 
         Signature sig(ls_, ls_->VoidTy);
-        sig << PointerType::getUnqual(ls_->Int8Ty);
+        sig << llvm::PointerType::getUnqual(ls_->Int8Ty);
 
         Value* call_args[] = {
           method_entry_
@@ -629,8 +649,7 @@ namespace rubinius {
       }
     }
 
-    Value* inline_cache_send(int args, InlineCache* cache) {
-      sends_done_++;
+    Value* invoke_inline_cache(InlineCache* cache) {
       Value* cache_const = b().CreateIntToPtr(
           ConstantInt::get(ls_->IntPtrTy, reinterpret_cast<uintptr_t>(cache)),
           ptr_type("InlineCache"), "cast_to_ptr");
@@ -645,8 +664,6 @@ namespace rubinius {
 
       Value* execute = b().CreateLoad(execute_pos, "execute");
 
-      setup_out_args(args);
-
       Value* call_args[] = {
         vm_,
         cache_const,
@@ -656,6 +673,13 @@ namespace rubinius {
 
       flush_ip();
       return b().CreateCall(execute, call_args, call_args+4, "ic_send");
+    }
+
+    Value* inline_cache_send(int args, InlineCache* cache) {
+      sends_done_++;
+
+      setup_out_args(args);
+      return invoke_inline_cache(cache);
     }
 
     Value* block_send(InlineCache* cache, int args, bool priv=false) {
@@ -1255,7 +1279,7 @@ namespace rubinius {
 
       Value* ptr = b().CreateIntToPtr(
           ConstantInt::get(ls_->IntPtrTy, reinterpret_cast<uintptr_t>(invoker)),
-          PointerType::getUnqual(sig.type()));
+          llvm::PointerType::getUnqual(sig.type()));
 
       Value* call = b().CreateCall(ptr, call_args, call_args + 4, "invoked_prim");
 
@@ -1794,7 +1818,7 @@ use_send:
 
         Value* current_serial_pos = b().CreateIntToPtr(
             ConstantInt::get(ls_->IntPtrTy, (intptr_t)entry->serial_location()),
-            PointerType::getUnqual(ls_->IntPtrTy), "cast_to_intptr");
+            llvm::PointerType::getUnqual(ls_->IntPtrTy), "cast_to_intptr");
 
         Value* current_serial = b().CreateLoad(current_serial_pos, "serial");
 
@@ -1810,7 +1834,7 @@ use_send:
 
         Value* value_pos = b().CreateIntToPtr(
             ConstantInt::get(ls_->IntPtrTy, (intptr_t)entry->value_location()),
-            PointerType::getUnqual(ObjType), "cast_to_objptr");
+            llvm::PointerType::getUnqual(ObjType), "cast_to_objptr");
 
         cached_value = b().CreateLoad(value_pos, "cached_value");
         cached_block = b().GetInsertBlock();
@@ -2563,7 +2587,7 @@ use_send:
 
       Value* cst = b().CreateBitCast(
           self,
-          PointerType::getUnqual(ObjType), "obj_array");
+          llvm::PointerType::getUnqual(ObjType), "obj_array");
 
       Value* idx2[] = {
         ConstantInt::get(ls_->Int32Ty, i / sizeof(Object*))
@@ -2934,18 +2958,11 @@ use_send:
     }
 
     void visit_push_cpath_top() {
-      Signature sig(ls_, ObjType);
+      push_system_object(0);
+    }
 
-      sig << VMTy;
-      sig << ls_->Int32Ty;
-
-      Value* call_args[] = {
-        vm_,
-        ConstantInt::get(ls_->Int32Ty, 0)
-      };
-
-      Value* val = sig.call("rbx_push_system_object", call_args, 2, "so", b());
-      stack_push(val);
+    void visit_push_rubinius() {
+      push_system_object(1);
     }
 
     void visit_push_ivar(opcode which) {
@@ -2975,6 +2992,7 @@ use_send:
       Signature sig(ls_, ObjType);
 
       sig << VMTy;
+      sig << "CallFrame";
       sig << ObjType;
       sig << ObjType;
       sig << ObjType;
@@ -2983,12 +3001,14 @@ use_send:
 
       Value* call_args[] = {
         vm_,
+        call_frame_,
         self,
         constant(as<Symbol>(literal(which))),
         stack_top()
       };
 
-      sig.call("rbx_set_ivar", call_args, 4, "ivar", b());
+      Value* ret = sig.call("rbx_set_ivar", call_args, 5, "ivar", b());
+      check_for_exception(ret);
     }
 
     void visit_push_my_field(opcode which) {

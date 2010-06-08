@@ -327,12 +327,12 @@ end
 #   required.
 
 instruction pop() [ value -- ]
-  stack_pop();
+  (void)stack_pop();
 end
 
 instruction pop_many(count) [ +count -- ]
   for(intptr_t i = 0; i < count; i++) {
-    stack_pop();
+    (void)stack_pop();
   }
 end
 
@@ -710,7 +710,7 @@ instruction raise_return() [ -- ] => raise
   if(!(call_frame->flags & CallFrame::cIsLambda) &&
      !call_frame->scope_still_valid(call_frame->scope->parent())) {
     Exception* exc = Exception::make_exception(state, G(jump_error), "unexpected return");
-    exc->locations(state, System::vm_backtrace(state, Fixnum::from(0), call_frame));
+    exc->locations(state, Location::from_call_stack(state, call_frame));
     state->thread_state()->raise_exception(exc);
   } else {
     if(call_frame->flags & CallFrame::cIsLambda) {
@@ -1169,7 +1169,7 @@ instruction send_method(literal) [ receiver -- value ] => send
   Arguments args(recv, Qnil, 0, 0);
   Object* ret = cache->execute(state, call_frame, args);
 
-  stack_pop();
+  (void)stack_pop();
 
   HANDLE_EXCEPTION(ret);
   stack_push(ret);
@@ -1820,7 +1820,7 @@ instruction check_interrupts() [ -- ]
     if(state->interrupts.timer) {
       state->interrupts.timer = false;
       state->set_call_frame(call_frame);
-      state->global_lock().yield();
+      state->global_lock().yield(state, call_frame);
     }
 
     if(state->interrupts.perform_gc) {
@@ -1859,7 +1859,7 @@ end
 
 instruction yield_debugger() [ -- ]
   flush_ip();
-  Helpers::yield_debugger(state, call_frame);
+  Helpers::yield_debugger(state, call_frame, Qnil);
 end
 
 # [Operation]
@@ -2135,8 +2135,8 @@ instruction meta_send_op_plus(literal) [ value1 value2 -- sum ] => send
   Object* right = stack_back(0);
 
   if(both_fixnum_p(left, right)) {
-    stack_pop();
-    stack_pop();
+    (void)stack_pop();
+    (void)stack_pop();
     Object* res = ((Fixnum*)(left))->add(state, (Fixnum*)(right));
     stack_push(res);
   } else {
@@ -2173,7 +2173,7 @@ instruction meta_send_op_minus(literal) [ value1 value2 -- difference ] => send
   Object* right = stack_back(0);
 
   if(both_fixnum_p(left, right)) {
-    stack_pop();
+    (void)stack_pop();
     stack_set_top(((Fixnum*)(left))->sub(state, (Fixnum*)(right)));
   } else {
     flush_ip();
@@ -2209,7 +2209,7 @@ instruction meta_send_op_equal(literal) [ value1 value2 -- boolean ] => send
   Object* t2 = stack_back(0);
   /* If both are not references, compare them directly. */
   if(!t1->reference_p() && !t2->reference_p()) {
-    stack_pop();
+    (void)stack_pop();
     stack_set_top((t1 == t2) ? Qtrue : Qfalse);
   } else {
     flush_ip();
@@ -2247,7 +2247,7 @@ instruction meta_send_op_lt(literal) [ value1 value2 -- boolean ]
   if(both_fixnum_p(t1, t2)) {
     native_int j = as<Integer>(t1)->to_native();
     native_int k = as<Integer>(t2)->to_native();
-    stack_pop();
+    (void)stack_pop();
     stack_set_top((j < k) ? Qtrue : Qfalse);
   } else {
     flush_ip();
@@ -2284,7 +2284,7 @@ instruction meta_send_op_gt(literal) [ value1 value2 -- boolean ]
   if(both_fixnum_p(t1, t2)) {
     native_int j = as<Integer>(t1)->to_native();
     native_int k = as<Integer>(t2)->to_native();
-    stack_pop();
+    (void)stack_pop();
     stack_set_top((j > k) ? Qtrue : Qfalse);
   } else {
     flush_ip();
@@ -2322,7 +2322,7 @@ instruction meta_send_op_tequal(literal) [ value1 value2 -- boolean ] => send
   Object* t2 = stack_back(0);
   /* If both are fixnums, or both are symbols, compare the ops directly. */
   if((t1->fixnum_p() && t2->fixnum_p()) || (t1->symbol_p() && t2->symbol_p())) {
-    stack_pop();
+    (void)stack_pop();
     stack_set_top((t1 == t2) ? Qtrue : Qfalse);
   } else {
     flush_ip();
@@ -2507,4 +2507,21 @@ instruction invoke_primitive(literal args) [ +args -- value ]
 
   HANDLE_EXCEPTION(ret);
   stack_push(ret);
+end
+
+# [Operation]
+#   Pushes the Rubinius module onto the stack.
+# [Format]
+#   \push_rubinius
+# [Stack Before]
+#   * ...
+# [Stack After]
+#   * rubinius module
+#   * ...
+# [Description]
+#   Pushes the top-level global Rubinius constant onto the stack.
+#   Generally this is done to call a utility method.
+
+instruction push_rubinius() [ -- constant ]
+  stack_push(G(rubinius));
 end

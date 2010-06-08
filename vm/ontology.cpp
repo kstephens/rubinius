@@ -21,7 +21,7 @@
 #include "builtin/list.hpp"
 #include "builtin/lookuptable.hpp"
 #include "builtin/methodtable.hpp"
-#include "builtin/memorypointer.hpp"
+#include "builtin/ffi_pointer.hpp"
 #include "builtin/nativefunction.hpp"
 #include "builtin/nativemethod.hpp"
 #include "builtin/regexp.hpp"
@@ -182,12 +182,15 @@ namespace rubinius {
     // Create the immediate classes.
     GO(nil_class).set(new_class("NilClass"));
     G(nil_class)->set_object_type(state, NilType);
+    GO(nil_class)->type_info()->allow_user_allocate = false;
 
     GO(true_class).set(new_class("TrueClass"));
     G(true_class)->set_object_type(state, TrueType);
+    GO(true_class)->type_info()->allow_user_allocate = false;
 
     GO(false_class).set(new_class("FalseClass"));
     G(false_class)->set_object_type(state, FalseType);
+    GO(false_class)->type_info()->allow_user_allocate = false;
 
     Class* numeric = new_class("Numeric");
     GO(numeric).set(numeric);
@@ -241,7 +244,7 @@ namespace rubinius {
     init_native_libraries();
     Thread::init(this);
     AccessVariable::init(this);
-    MemoryPointer::init(this);
+    Pointer::init(this);
     NativeFunction::init(this);
     TaskProbe::init(this);
     Exception::init(this);

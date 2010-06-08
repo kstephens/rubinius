@@ -248,12 +248,65 @@ namespace rubinius {
     i.set_result(ops.as_obj(tagged));
   }
 
-  enum FloatOperation {
+  enum MathOperation {
     cAdd, cSub, cMultiply, cDivide, cMod,
     cEqual, cLessThan, cLessThanEqual, cGreaterThan, cGreaterThanEqual
   };
 
-  static void float_op(FloatOperation op, Class* klass,
+  static void fixnum_compare(MathOperation op, JITOperations& ops, Inliner& i) {
+    Value* lint = ops.cast_int(i.recv());
+    Value* rint = ops.cast_int(i.arg(0));
+
+    Value* anded = BinaryOperator::CreateAnd(lint, rint, "fixnums_anded",
+                                             ops.current_block());
+
+    Value* fix_mask = ConstantInt::get(ops.NativeIntTy, TAG_FIXNUM_MASK);
+    Value* fix_tag  = ConstantInt::get(ops.NativeIntTy, TAG_FIXNUM);
+
+    Value* masked = BinaryOperator::CreateAnd(anded, fix_mask, "masked",
+                                              ops.current_block());
+
+    Value* cmp = ops.create_equal(masked, fix_tag, "is_fixnum");
+
+    BasicBlock* push = ops.new_block("push_le");
+    BasicBlock* send = i.failure();
+
+    ops.create_conditional_branch(push, send, cmp);
+
+    ops.set_block(push);
+
+    Value* performed = 0;
+
+    switch(op) {
+    case cEqual:
+      performed = ops.b().CreateICmpEQ(lint, rint, "fixnum.eq");
+      break;
+    case cLessThan:
+      performed = ops.b().CreateICmpSLT(lint, rint, "fixnum.lt");
+      break;
+    case cLessThanEqual:
+      performed = ops.b().CreateICmpSLE(lint, rint, "fixnum.le");
+      break;
+    case cGreaterThan:
+      performed = ops.b().CreateICmpSGT(lint, rint, "fixnum.gt");
+      break;
+    case cGreaterThanEqual:
+      performed = ops.b().CreateICmpSGE(lint, rint, "fixnum.ge");
+      break;
+    default:
+      abort();
+    }
+
+    Value* le = ops.b().CreateSelect(
+                   performed,
+                   ops.constant(Qtrue),
+                   ops.constant(Qfalse));
+
+    i.exception_safe();
+    i.set_result(ops.as_obj(le));
+  }
+
+  static void float_op(MathOperation op, Class* klass,
       JITOperations& ops, Inliner& i)
   {
     Value* self = i.recv();
@@ -312,7 +365,7 @@ namespace rubinius {
     i.set_result(ops.b().CreateBitCast(res, ops.ObjType));
   }
 
-  static void float_compare(FloatOperation op, Class* klass,
+  static void float_compare(MathOperation op, Class* klass,
       JITOperations& ops, Inliner& i)
   {
     Value* self = i.recv();
@@ -436,6 +489,21 @@ namespace rubinius {
     } else if(prim == Primitives::fixnum_neg && count_ == 0) {
       inlined_prim = "fixnum_neg";
       fixnum_neg(ops_, *this);
+    } else if(prim == Primitives::fixnum_equal && count_ == 1) {
+      inlined_prim = "fixnum_eq";
+      fixnum_compare(cEqual, ops_, *this);
+    } else if(prim == Primitives::fixnum_lt && count_ == 1) {
+      inlined_prim = "fixnum_lt";
+      fixnum_compare(cLessThan, ops_, *this);
+    } else if(prim == Primitives::fixnum_le && count_ == 1) {
+      inlined_prim = "fixnum_le";
+      fixnum_compare(cLessThanEqual, ops_, *this);
+    } else if(prim == Primitives::fixnum_gt && count_ == 1) {
+      inlined_prim = "fixnum_gt";
+      fixnum_compare(cGreaterThan, ops_, *this);
+    } else if(prim == Primitives::fixnum_ge && count_ == 1) {
+      inlined_prim = "fixnum_ge";
+      fixnum_compare(cGreaterThanEqual, ops_, *this);
     } else if(prim == Primitives::object_equal && count_ == 1) {
       inlined_prim = "object_equal";
       object_equal(klass, ops_, *this);

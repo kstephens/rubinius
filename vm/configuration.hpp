@@ -27,15 +27,18 @@ namespace rubinius {
     config::String  jit_log;
     config::Bool    jit_disabled;
     config::Bool    jit_debug;
+    config::Bool    jit_sync;
 
     // Query Agent
     config::Integer qa_port;
     config::Bool    qa_verbose;
+    config::String  qa_tmpdir;
 
     // Debug
     config::Bool    gil_debug;
     config::Integer print_config;
     config::Bool    ic_stats;
+    config::Bool    profile;
 
     // defaults
     static const int default_gc_bytes = 1048576 * 3;
@@ -68,11 +71,14 @@ namespace rubinius {
       , jit_log(this,        "jit.log")
       , jit_disabled(this,   "int")
       , jit_debug(this,      "jit.debug", false)
-      , qa_port(this,         "agent.port")
+      , jit_sync(this,       "jit.sync", false)
+      , qa_port(this,         "agent.start")
       , qa_verbose(this,      "agent.verbose")
+      , qa_tmpdir(this,       "agent.tmpdir")
       , gil_debug(this,       "vm.gil.debug")
       , print_config(this,    "config.print")
       , ic_stats(this,        "ic.stats")
+      , profile(this,         "profile")
     {
       gc_bytes.set_description(
           "The number of bytes the young generation of the GC should use");
@@ -116,6 +122,9 @@ namespace rubinius {
       jit_disabled.set_description(
           "Force the JIT to never turn on");
 
+      jit_sync.set_description(
+          "Wait for the JIT to finish compiling each method");
+
       print_config.set_description(
           "blank or 1 == names and values, 2 == description as well");
 
@@ -132,10 +141,22 @@ namespace rubinius {
           "Print out stats about the InlineCaches before exiting");
 
       qa_port.set_description(
-          "The TCP port for the query agent to listen on");
+          "Start the QueryAgent on a TCP port. Default port is a random port");
 
       qa_verbose.set_description(
           "Whether or not the query agent should print out status to stderr");
+
+      qa_tmpdir.set_description(
+          "Where to store files used to discover running query agents");
+
+      profile.set_description(
+          "Configure the system to profile ruby code");
+    }
+
+    void finalize() {
+      if(profile) {
+        jit_disabled.value = true;
+      }
     }
   };
 }

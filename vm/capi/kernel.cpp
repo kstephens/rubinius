@@ -4,7 +4,7 @@
 #include "exception_point.hpp"
 
 #include "capi/capi.hpp"
-#include "capi/ruby.h"
+#include "capi/include/ruby.h"
 
 using namespace rubinius;
 
@@ -57,6 +57,9 @@ extern "C" {
     Exception* exc = Exception::make_exception(
           env->state(), as<Class>(env->get_object(error_handle)), reason);
     capi::capi_raise_backend(exc);
+
+    printf("rb_raise broken!\n");
+    exit(1);
   }
 
   VALUE rb_rescue2(VALUE (*func)(ANYARGS), VALUE arg1,
@@ -110,7 +113,7 @@ extern "C" {
     return rb_rescue2(func, arg1, raise_func, arg2, rb_eStandardError,  0);
   }
 
-  VALUE rb_protect(VALUE (*func)(ANYARGS), VALUE data, int* status) {
+  VALUE rb_protect(VALUE (*func)(VALUE), VALUE data, int* status) {
     NativeMethodEnvironment* env = NativeMethodEnvironment::get();
     VALUE ret = Qnil;
 
@@ -118,10 +121,10 @@ extern "C" {
     PLACE_EXCEPTION_POINT(ep);
 
     if(unlikely(ep.jumped_to())) {
-      *status = 1;
+      if(status) *status = 1;
     } else {
       ret = (*func)(data);
-      *status = 0;
+      if(status) *status = 0;
     }
 
     ep.pop(env);

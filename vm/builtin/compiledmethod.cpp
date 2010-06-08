@@ -8,6 +8,7 @@
 #include "builtin/symbol.hpp"
 #include "builtin/tuple.hpp"
 #include "builtin/string.hpp"
+#include "builtin/lookuptable.hpp"
 
 #include "ffi.hpp"
 #include "marshal.hpp"
@@ -163,7 +164,6 @@ namespace rubinius {
     }
 
     LLVMState* ls = LLVMState::get(state);
-    timer::Running timer(ls->time_spent);
 
     jit::Compiler jit;
     jit.compile_method(ls, this, backend_method_);
@@ -195,12 +195,17 @@ namespace rubinius {
 #endif
   }
 
-  Object* CompiledMethod::set_breakpoint(STATE, Fixnum* ip) {
+  Object* CompiledMethod::set_breakpoint(STATE, Fixnum* ip, Object* bp) {
     int i = ip->to_native();
     if(backend_method_ == NULL) formalize(state);
     if(!backend_method_->validate_ip(state, i)) return Primitives::failure();
+
+    if(breakpoints_->nil_p()) {
+      breakpoints_ = LookupTable::create(state);
+    }
+
+    breakpoints_->store(state, ip, bp);
     backend_method_->run = VMMethod::debugger_interpreter;
-    backend_method_->set_breakpoint_flags(state, i, cBreakpoint);
     return ip;
   }
 
@@ -208,11 +213,18 @@ namespace rubinius {
     int i = ip->to_native();
     if(backend_method_ == NULL) return ip;
     if(!backend_method_->validate_ip(state, i)) return Primitives::failure();
-    // TODO Should this always reset to the basic interpreter?
-    backend_method_->run = VMMethod::interpreter;
-    backend_method_->set_breakpoint_flags(state, i,
-            backend_method_->get_breakpoint_flags(state, i) & ~cBreakpoint);
-    return ip;
+
+    bool removed = false;
+    if(!breakpoints_->nil_p()) {
+      breakpoints_->remove(state, ip, &removed);
+
+      // No more breakpoints, switch back to the normal interpreter
+      if(breakpoints_->entries()->to_native() == 0) {
+        backend_method_->run = VMMethod::interpreter;
+      }
+    }
+
+    return removed ? Qtrue : Qfalse;
   }
 
   Object* CompiledMethod::is_breakpoint(STATE, Fixnum* ip) {

@@ -102,8 +102,20 @@ namespace rubinius {
     set_const(state, state->symbol(name), val);
   }
 
-  Object* Module::get_const(STATE, Symbol* sym, bool* found) {
-    return constants_->fetch(state, sym, found);
+  Object* Module::get_const(STATE, Symbol* sym, bool* found, bool check_super) {
+    Module* mod = this;
+
+    while(!mod->nil_p()) {
+      Object* obj = mod->constants()->fetch(state, sym, found);
+
+      if(*found) return obj;
+
+      if(!check_super) break;
+
+      mod = mod->superclass();
+    }
+
+    return Qnil;
   }
 
   Object* Module::get_const(STATE, Symbol* sym) {
@@ -333,11 +345,9 @@ namespace rubinius {
       mod_to_query = mod;
     }
 
-    if(mod_to_query->table_ivar_defined(state, name)->true_p()) {
-      Object* value = mod_to_query->get_table_ivar(state, name);
-      mod_to_query->del_table_ivar(state, name);
-      return value;
-    }
+    bool removed = false;
+    Object* value = mod_to_query->del_table_ivar(state, name, &removed);
+    if(removed) return value;
 
     std::stringstream ss;
     mod = this;

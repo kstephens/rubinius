@@ -5,7 +5,7 @@
 #include "builtin/symbol.hpp"
 
 #include "capi/capi.hpp"
-#include "capi/ruby.h"
+#include "capi/include/ruby.h"
 
 using namespace rubinius;
 using namespace rubinius::capi;
@@ -145,8 +145,8 @@ extern "C" {
     VALUE klass = rb_const_get(rb_cObject, rb_intern(type_name));
 
     if(!RTEST(rb_obj_is_kind_of(return_handle, klass))) {
-      rb_raise(rb_eTypeError, "%s#to_str should return %s",
-               rb_obj_classname(return_handle), type_name);
+      rb_raise(rb_eTypeError, "%s#%s should return %s",
+               rb_obj_classname(object_handle), method_name, type_name);
     }
 
     return return_handle;
@@ -309,11 +309,24 @@ extern "C" {
     return obj;
   }
 
+  void rb_check_safe_obj(VALUE obj) {
+  }
+
+  void rb_check_safe_str(VALUE obj) {
+  }
+
+  void rb_secure_update(VALUE obj) {
+  }
+
   VALUE rb_any_to_s(VALUE obj) {
     return rb_obj_as_string(obj);
   }
 
   VALUE rb_obj_instance_eval(int argc, VALUE* argv, VALUE self) {
-    return rb_funcall2(self, rb_intern("instance_eval"), argc, (const VALUE*)argv);
+    NativeMethodEnvironment* env = NativeMethodEnvironment::get();
+    VALUE block = env->get_handle(env->block());
+
+    return rb_funcall2b(self, rb_intern("instance_eval"), argc,
+                        (const VALUE*)argv, block);
   }
 }

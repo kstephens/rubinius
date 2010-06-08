@@ -1,7 +1,6 @@
 #ifndef RBX_BUILTIN_SYSTEM_HPP
 #define RBX_BUILTIN_SYSTEM_HPP
 
-#include "vm/object_types.hpp"
 #include "vm/type_info.hpp"
 
 #include "builtin/object.hpp"
@@ -14,8 +13,9 @@ namespace rubinius {
   class BlockEnvironment;
   class CompiledMethod;
   class StaticScope;
+  class IO;
 
-  class CallFrame;
+  struct CallFrame;
 
   /**
    *  VM primitives etc.
@@ -60,7 +60,7 @@ namespace rubinius {
     static Object*  vm_exec(STATE, String* path, Array* args);
 
     // Ruby.primitive :vm_wait_pid
-    static Object*  vm_wait_pid(STATE, Fixnum* pid, Object* no_hang);
+    static Object*  vm_wait_pid(STATE, Fixnum* pid, Object* no_hang, CallFrame* calling_environment);
 
     // Ruby.primitive :vm_exit
     static Object*  vm_exit(STATE, Fixnum* code);
@@ -116,7 +116,7 @@ namespace rubinius {
      *  Backtrace as an Array.
      */
     // Ruby.primitive :vm_backtrace
-    static Array* vm_backtrace(STATE, Fixnum* skip, CallFrame* calling_environment);
+    static Array* vm_backtrace(STATE, Fixnum* skip, Object* inc_vars, CallFrame* calling_environment);
 
     /** Return true if the profiler is available. */
     // Ruby.primitive :vm_profiler_instrumenter_available_p
@@ -255,6 +255,9 @@ namespace rubinius {
 
     // Ruby.primitive :vm_get_user_home
     static String* vm_get_user_home(STATE, String* name);
+
+    // Ruby.primitive :vm_agent_io
+    static IO*     vm_agent_io(STATE);
 
   public:   /* Type info */
 

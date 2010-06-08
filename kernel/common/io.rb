@@ -65,7 +65,7 @@ class IO
       reset!
 
       if fill(io) < 0
-        raise IOError, "error occured while filling buffer (#{obj})"
+        raise IOError, "error occurred while filling buffer (#{obj})"
       end
 
       if @used == 0
@@ -654,6 +654,7 @@ class IO
   def binmode
     ensure_open
     # HACK what to do?
+    return self
   end
 
   def bytes
@@ -1390,8 +1391,8 @@ class IO
   #  f2.readlines[0]   #=> "This is line one\n"
   #  f2.reopen(f1)     #=> #<File:testfile>
   #  f2.readlines[0]   #=> "This is line one\n"
-  def reopen(other, mode="r+")
-    if other.respond_to? :to_io
+  def reopen(other, mode=undefined)
+    if other.respond_to?(:to_io)
       flush
 
       if other.kind_of? IO
@@ -1406,17 +1407,19 @@ class IO
       io.ensure_open
       io.reset_buffering
 
-      prim_reopen io
+      reopen_io io
       Rubinius::Unsafe.set_class self, io.class
     else
       flush unless closed?
 
-      path = StringValue(other)
-      fd = IO.sysopen(path, mode, 0666)
-      Errno.handle path if fd < 0
+      # If a mode isn't passed in, use the mode that the IO is already in.
+      if mode.equal? undefined
+        mode = @mode
+      else
+        mode = IO.parse_mode(mode) & ACCMODE
+      end
 
-      reset_buffering
-      IO.setup self, fd, mode
+      reopen_path(StringValue(other), mode | CREAT)
       seek 0, SEEK_SET
     end
 
@@ -1657,7 +1660,8 @@ class IO::BidirectionalPipe < IO
     :readlines,
     :readpartial,
     :sysread,
-    :seek
+    :seek,
+    :binmode
   ]
 
   WRITE_METHODS = [

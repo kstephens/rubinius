@@ -81,6 +81,10 @@ module Rubinius
       add :goto_if_false, lbl
     end
 
+    def send_vcall(meth)
+      send meth, 0, true
+    end
+
     # The :g accessor is provided to make the code in the
     # utility methods below clearer
     attr_reader   :g
@@ -315,14 +319,14 @@ module Rubinius
     def in_class(name)
       case name
       when Symbol
-        g.push_const :Rubinius
+        g.push_rubinius
         g.push_literal name
         g.push :nil
 
         g.push_scope
         g.send :open_class, 3
       when String
-        g.push_const :Rubinius
+        g.push_rubinius
 
         levels = name.split(/::/).map { |s| s.to_sym }
         klass = levels.pop
@@ -340,7 +344,7 @@ module Rubinius
       return unless block_given?
 
       g.dup
-      g.push_const :Rubinius
+      g.push_rubinius
       g.swap
       g.push_literal :__class_init__
       g.swap
@@ -365,7 +369,7 @@ module Rubinius
     end
 
     def in_singleton_method(name, sing)
-      g.push_const :Rubinius
+      g.push_rubinius
 
       g.push_literal name
 
@@ -392,7 +396,7 @@ module Rubinius
         raise "use in_singleton_method"
       end
 
-      g.push_const :Rubinius
+      g.push_rubinius
 
       g.push_literal name
 
@@ -413,7 +417,7 @@ module Rubinius
     def in_module(name)
       case name
       when Symbol
-        g.push_const :Rubinius
+        g.push_rubinius
         g.push_literal name
         g.push_scope
         g.send :open_module, 2
@@ -421,7 +425,7 @@ module Rubinius
         levels = name.split(/::/).map { |s| s.to_sym }
         klass = levels.pop
 
-        g.push_const :Rubinius
+        g.push_rubinius
         g.push_literal klass
 
         levels.each do |level|
@@ -434,7 +438,7 @@ module Rubinius
       return unless block_given?
 
       g.dup
-      g.push_const :Rubinius
+      g.push_rubinius
       g.swap
       g.push_literal :__module_init__
       g.swap

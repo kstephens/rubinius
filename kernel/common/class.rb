@@ -75,7 +75,7 @@ class Class
   # Returns the Class object that this Class inherits from. Included Modules
   # are not considered for this purpose.
 
-  def superclass()
+  def superclass
     cls = direct_superclass
     return nil unless cls
     while cls and cls.kind_of? Rubinius::IncludedModule
@@ -90,7 +90,7 @@ class Class
 
   def to_s
     if obj = __metaclass_object__
-      "#<Class: #{obj.inspect}>"
+      "#<Class: #<#{obj.class.__name__}:#{obj.object_id}>>"
     else
       @module_name ? @module_name.to_s : super
     end

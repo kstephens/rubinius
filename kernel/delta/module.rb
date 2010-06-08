@@ -2,7 +2,7 @@ class Module
   def alias_method(new_name, current_name)
     new_name = Type.coerce_to_symbol(new_name)
     current_name = Type.coerce_to_symbol(current_name)
-    mod, entry = lookup_method(current_name)
+    mod, entry = lookup_method(current_name, true, false)
 
     if entry
       # If we're aliasing a method we contain, just reference it directly, no
@@ -16,7 +16,7 @@ class Module
 
       Rubinius::VM.reset_method_cache(new_name)
     else
-      if ai = __metaclass_object__
+      if kind_of?(Class) && ai = __metaclass_object__
         raise NameError, "Unable to find '#{current_name}' for object #{ai.inspect}"
       else
         thing = kind_of?(Class) ? "class" : "module"
@@ -39,7 +39,7 @@ class Module
       mc = Rubinius.object_metaclass(self)
       args.each do |meth|
         method_name = Type.coerce_to_symbol meth
-        method = find_method_in_hierarchy(method_name)
+        mod, method = lookup_method(method_name)
         mc.method_table.store method_name, method.method, :public
         set_visibility method_name, :private
       end

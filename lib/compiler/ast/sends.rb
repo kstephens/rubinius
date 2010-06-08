@@ -32,12 +32,20 @@ module Rubinius
         if @block
           @block.bytecode(g)
           g.send_with_block @name, 0, @privately
+        elsif @vcall_style
+          g.send_vcall @name
         else
           g.send @name, 0, @privately
         end
       end
 
       def value_defined(g, f)
+        # Save the current exception into a stack local
+        g.push_exception_state
+        outer_exc_state = g.new_stack_local
+        g.set_stack_local outer_exc_state
+        g.pop
+
         ok = g.new_label
         ex = g.new_label
         g.setup_unwind ex, RescueType
@@ -49,6 +57,8 @@ module Rubinius
 
         ex.set!
         g.clear_exception
+        g.push_stack_local outer_exc_state
+        g.restore_exception_state
         g.goto f
 
         ok.set!

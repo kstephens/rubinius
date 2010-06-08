@@ -3,9 +3,10 @@
 #include "builtin/symbol.hpp"
 
 #include "helpers.hpp"
+#include "call_frame.hpp"
 
 #include "capi/capi.hpp"
-#include "capi/ruby.h"
+#include "capi/include/ruby.h"
 
 using namespace rubinius;
 using namespace rubinius::capi;
@@ -22,6 +23,51 @@ extern "C" {
     }
 
     return ret;
+  }
+
+  int rb_const_defined_at(VALUE module_handle, ID const_id) {
+    return rb_funcall(module_handle,
+        rb_intern("const_defined?"), 1, ID2SYM(const_id));
+  }
+
+  ID rb_frame_last_func() {
+    NativeMethodEnvironment* env = NativeMethodEnvironment::get();
+
+    return reinterpret_cast<ID>(env->current_call_frame()->name());
+  }
+
+  static VALUE const_missing(VALUE klass, ID id) {
+    return rb_funcall(klass, rb_intern("const_missing"), 1, ID2SYM(id));
+  }
+
+  VALUE rb_const_get_at(VALUE module_handle, ID id_name) {
+    NativeMethodEnvironment* env = NativeMethodEnvironment::get();
+
+    Symbol* name = reinterpret_cast<Symbol*>(id_name);
+    Module* module = c_as<Module>(env->get_object(module_handle));
+
+    bool found = false;
+    Object* val = module->get_const(env->state(), name, &found);
+    if(found) return env->get_handle(val);
+
+    return const_missing(module_handle, id_name);
+  }
+
+  VALUE rb_const_get_from(VALUE module_handle, ID id_name) {
+    NativeMethodEnvironment* env = NativeMethodEnvironment::get();
+
+    Symbol* name = reinterpret_cast<Symbol*>(id_name);
+    Module* module = c_as<Module>(env->get_object(module_handle));
+
+    bool found = false;
+    while(!module->nil_p()) {
+      Object* val = module->get_const(env->state(), name, &found);
+      if(found) return env->get_handle(val);
+
+      module = module->superclass();
+    }
+
+    return const_missing(module_handle, id_name);
   }
 
   VALUE rb_const_get(VALUE module_handle, ID id_name) {
@@ -48,8 +94,7 @@ extern "C" {
       module = module->superclass();
     }
 
-    // BUG should call const missing here.
-    return Qnil;
+    return const_missing(module_handle, id_name);
   }
 
   void rb_const_set(VALUE module_handle, ID name, VALUE obj_handle) {
@@ -135,6 +180,14 @@ extern "C" {
 
   void rb_undef_method(VALUE module_handle, const char* name) {
     rb_funcall(module_handle, rb_intern("undef_method!"), 1, ID2SYM(rb_intern(name)));
+  }
+
+  void rb_undef(VALUE handle, ID name) {
+    NativeMethodEnvironment* env = NativeMethodEnvironment::get();
+
+    Symbol* sym = reinterpret_cast<Symbol*>(name);
+    rb_undef_method(handle, sym->c_str(env->state()));
+    // In MRI, rb_undef also calls the undef_method hooks, maybe we should?
   }
 
   VALUE rb_mod_ancestors(VALUE mod) {

@@ -5,7 +5,6 @@
 #include "type_info.hpp"
 
 #include <ctype.h>
-#include "object_types.hpp"
 
 namespace rubinius {
   class ByteArray : public Object {
@@ -16,7 +15,7 @@ namespace rubinius {
     native_int full_size_;
 
     // Body access
-    uint8_t bytes[];
+    uint8_t bytes[0];
 
   public:
     static void init(STATE);
@@ -78,7 +77,12 @@ namespace rubinius {
 
     class Info : public TypeInfo {
     public:
-      Info(object_type type, bool cleanup = false): TypeInfo(type, cleanup) { }
+      Info(object_type type, bool cleanup = false)
+        : TypeInfo(type, cleanup)
+      {
+        allow_user_allocate = false;
+      }
+
       virtual void mark(Object* t, ObjectMark& mark);
       virtual void auto_mark(Object* obj, ObjectMark& mark) {}
       virtual size_t object_size(const ObjectHeader* object);

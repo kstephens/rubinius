@@ -4,6 +4,11 @@ require 'rbconfig'
 require 'tempfile'
 require 'fileutils'
 
+unless !defined?(RUBY_ENGINE) || (RUBY_ENGINE == 'ruby' && RUBY_VERSION < '1.9.0')
+  STDERR.puts "Sorry, for now please build rubinius using ruby 1.8"
+  exit 1
+end
+
 root = File.expand_path File.dirname(__FILE__)
 
 require File.join(root, "kernel", "delta", "options")
@@ -22,7 +27,7 @@ class Configure
 
     # File system paths
     @bindir       = root + "/bin"
-    @includedir   = root + "/vm/capi"
+    @includedir   = root + "/vm/capi/include"
     @libdir       = root
     @runtime      = @libdir + "/runtime"
     @lib_path     = @libdir + "/lib"
@@ -38,9 +43,9 @@ class Configure
 
     # Essential settings (modify these for creating releases)
     @libversion = "1.0"
-    @version = "#{@libversion}.0-rc4"
-    @release_date = "2010-03-31"
-    @config_version = 5
+    @version = "#{@libversion}.1"
+    @release_date = "2010-06-03"
+    @config_version = 9
 
     if !ENV['RELEASE'] and File.directory?(root + "/.git")
       @buildrev = `git rev-list --all | head -n1`.chomp
@@ -78,7 +83,7 @@ class Configure
     end
 
     o.on "--enable-llvm", "Enable llvm (default)" do
-      # noop
+      @use_llvm = true
     end
 
     @skip_system = false
@@ -152,6 +157,14 @@ class Configure
       @vendordir = expand dir
     end
 
+    o.doc "\n Optional features"
+
+    @options = o
+
+    @features = {}
+
+    feature "execinfo"
+
     o.doc "\n Help!"
 
     o.on "--show", "Print the current configuration and exit" do
@@ -167,7 +180,18 @@ class Configure
 
     o.doc ""
 
-    @options = o
+  end
+
+  def feature(name, on_by_default=true)
+    @features[name] = on_by_default
+
+    @options.on "--with-#{name}", "Enable #{name}" do
+      @features[name] = true
+    end
+
+    @options.on "--without-#{name}", "Disable #{name}" do
+      @features[name] = false
+    end
   end
 
   def parse(ary)
@@ -377,6 +401,8 @@ class Configure
       # 2.6svn is an unknown beast, don't trust it.
       if version == "2.6svn" or parts[0] < 2 or parts[1] < 6
         puts "too old of a version"
+      elsif parts[0] != 2 or parts[1] != 6
+        puts "only 2.6 is supported"
       else
         puts "found! (version #{version})"
         @llvm_configure = config
@@ -433,7 +459,7 @@ class Configure
   end
 
   def detect_features
-    if has_function("backtrace", ["execinfo.h"])
+    if @features["execinfo"] and has_function("backtrace", ["execinfo.h"])
       @defines << "HAS_EXECINFO"
     end
   end

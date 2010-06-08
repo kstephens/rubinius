@@ -15,9 +15,10 @@
 #include "builtin/autoload.hpp"
 #include "builtin/global_cache_entry.hpp"
 #include "builtin/iseq.hpp"
-#include "builtin/memorypointer.hpp"
+#include "builtin/ffi_pointer.hpp"
 #include "builtin/integer.hpp"
 #include "builtin/float.hpp"
+#include "builtin/location.hpp"
 
 #include "instruments/profiler.hpp"
 
@@ -178,7 +179,7 @@ extern "C" {
                         int required) {
     Exception* exc =
         Exception::make_argument_error(state, required, args.total(), msg.name);
-    exc->locations(state, System::vm_backtrace(state, Fixnum::from(0), call_frame));
+    exc->locations(state, Location::from_call_stack(state, call_frame));
     state->thread_state()->raise_exception(exc);
 
     return NULL;
@@ -190,7 +191,7 @@ extern "C" {
     } catch(TypeError& e) {
       Exception* exc =
         Exception::make_type_error(state, e.type, e.object, e.reason);
-      exc->locations(state, System::vm_backtrace(state, Fixnum::from(0), call_frame));
+      exc->locations(state, Location::from_call_stack(state, call_frame));
 
       state->thread_state()->raise_exception(exc);
       return NULL;
@@ -664,7 +665,7 @@ extern "C" {
     if(state->interrupts.timer) {
       state->interrupts.timer = false;
       state->set_call_frame(call_frame);
-      state->global_lock().yield();
+      state->global_lock().yield(state, call_frame);
     }
 
     return Qtrue;
@@ -682,7 +683,7 @@ extern "C" {
       if(state->interrupts.timer) {
         state->interrupts.timer = false;
         state->set_call_frame(call_frame);
-        state->global_lock().yield();
+        state->global_lock().yield(state, call_frame);
       }
     }
     if(!state->check_async(call_frame)) return NULL;
@@ -740,6 +741,8 @@ extern "C" {
     switch(which) {
     case 0:
       return G(object);
+    case 1:
+      return G(rubinius);
     default:
       return Qnil;
     }
@@ -749,7 +752,12 @@ extern "C" {
     return self->get_ivar(state, name);
   }
 
-  Object* rbx_set_ivar(STATE, Object* self, Symbol* name, Object* val) {
+  Object* rbx_set_ivar(STATE, CallFrame* call_frame, Object* self, Symbol* name, Object* val) {
+    if(self->reference_p() && self->is_frozen_p()) {
+      Exception::frozen_error(state, call_frame);
+      return NULL;
+    }
+
     return self->set_ivar(state, name, val);
   }
 
@@ -842,7 +850,7 @@ extern "C" {
     if(!(call_frame->flags & CallFrame::cIsLambda) &&
        !call_frame->scope_still_valid(call_frame->scope->parent())) {
       Exception* exc = Exception::make_exception(state, G(jump_error), "unexpected return");
-      exc->locations(state, System::vm_backtrace(state, Fixnum::from(0), call_frame));
+      exc->locations(state, Location::from_call_stack(state, call_frame));
       state->thread_state()->raise_exception(exc);
     } else {
       state->thread_state()->raise_return(top, call_frame->top_scope(state));
@@ -982,7 +990,7 @@ extern "C" {
   }
 
   void* rbx_ffi_to_ptr(STATE, Object* obj, bool* valid) {
-    if(MemoryPointer* ptr = try_as<MemoryPointer>(obj)) {
+    if(Pointer* ptr = try_as<Pointer>(obj)) {
       *valid = true;
       return ptr->pointer;
     } else if(obj->nil_p()) {
@@ -1030,7 +1038,7 @@ extern "C" {
 
   Object* rbx_ffi_from_ptr(STATE, void* ptr) {
     if(!ptr) return Qnil;
-    return MemoryPointer::create(state, ptr);
+    return Pointer::create(state, ptr);
   }
 
   Object* rbx_ffi_from_string(STATE, char* ptr) {
@@ -1047,7 +1055,7 @@ extern "C" {
     if(ptr) {
       s = String::create(state, ptr);
       s->taint(state);
-      p = MemoryPointer::create(state, ptr);
+      p = Pointer::create(state, ptr);
     } else {
       s = p = Qnil;
     }
@@ -1081,7 +1089,6 @@ extern "C" {
       return Qnil;
     }
   }
-
 }
 
 #endif

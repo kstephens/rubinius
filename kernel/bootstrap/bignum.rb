@@ -45,7 +45,6 @@ class Bignum < Integer
     redo_coerced :div, other
   end
 
-
   def divmod(other)
     Ruby.primitive :bignum_divmod
     redo_coerced :divmod, other
@@ -73,14 +72,26 @@ class Bignum < Integer
     super(o)
   end
 
-  def <<(o)
+  def <<(other)
     Ruby.primitive :bignum_left_shift
-    super(o)
+
+    other = Type.coerce_to other, Integer, :to_int
+    unless other.kind_of? Fixnum
+      raise RangeError, "argument is out of range for a Fixnum"
+    end
+
+    self << other
   end
 
-  def >>(o)
+  def >>(other)
     Ruby.primitive :bignum_right_shift
-    super(o)
+
+    other = Type.coerce_to other, Integer, :to_int
+    unless other.kind_of? Fixnum
+      raise RangeError, "argument is out of range for a Fixnum"
+    end
+
+    self >> other
   end
 
   def **(o)
@@ -116,7 +127,9 @@ class Bignum < Integer
 
   def ==(o)
     Ruby.primitive :bignum_equal
-    super(o)
+    # This is to make sure the return value is true or false
+    return true if o == self
+    false
   end
 
   def <=>(other)

@@ -6,7 +6,7 @@
 #include "builtin/string.hpp"
 
 #include "capi/capi.hpp"
-#include "capi/ruby.h"
+#include "capi/include/ruby.h"
 
 #include <cstring>
 
@@ -202,6 +202,10 @@ extern "C" {
     return rb_str_new(string, std::strlen(string));
   }
 
+  VALUE rb_str_new3(VALUE string) {
+    return rb_str_dup(string);
+  }
+
   VALUE rb_str_plus(VALUE self_handle, VALUE other_handle) {
     return rb_str_append(rb_str_dup(self_handle), other_handle);
   }
@@ -250,7 +254,7 @@ extern "C" {
     return rb_convert_type(object_handle, 0, "String", "to_str");
   }
 
-  VALUE rb_string_value(VALUE* object_variable) {
+  VALUE rb_string_value(volatile VALUE* object_variable) {
     NativeMethodEnvironment* env = NativeMethodEnvironment::get();
 
     if(!kind_of<String>(env->get_object(*object_variable))) {
@@ -260,7 +264,7 @@ extern "C" {
     return *object_variable;
   }
 
-  char* rb_string_value_ptr(VALUE* object_variable) {
+  char* rb_string_value_ptr(volatile VALUE* object_variable) {
     NativeMethodEnvironment* env = NativeMethodEnvironment::get();
 
     VALUE str = rb_string_value(object_variable);
@@ -270,7 +274,7 @@ extern "C" {
     return RSTRING_PTR(str);
   }
 
-  char* rb_string_value_cstr(VALUE* object_variable) {
+  char* rb_string_value_cstr(volatile VALUE* object_variable) {
     NativeMethodEnvironment* env = NativeMethodEnvironment::get();
 
     VALUE str = rb_string_value(object_variable);

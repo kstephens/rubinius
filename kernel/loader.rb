@@ -111,12 +111,12 @@ containing the Rubinius standard library files.
     end
 
     def show_syntax_error(e)
-      puts "A syntax error has occured:"
-      puts "    #{e.message}"
-      puts "    near line #{e.file}:#{e.line}, column #{e.column}"
-      puts "\nCode:\n#{e.code}"
+      STDERR.puts "A syntax error has occurred:"
+      STDERR.puts "    #{e.message}"
+      STDERR.puts "    near line #{e.file}:#{e.line}, column #{e.column}"
+      STDERR.puts "\nCode:\n#{e.code}"
       if e.column
-        puts((" " * (e.column - 1)) + "^")
+        STDERR.puts((" " * (e.column - 1)) + "^")
       end
     end
 
@@ -151,7 +151,7 @@ containing the Rubinius standard library files.
       end
 
       options.on "-c", "FILE", "Check the syntax of FILE" do |file|
-        mel = Rubinius::Melbourne.new file, 0, []
+        mel = Rubinius::Melbourne.new file, 1, []
         begin
           mel.parse_file
         rescue SyntaxError => e
@@ -234,7 +234,23 @@ containing the Rubinius standard library files.
       end
 
       options.on "-w", "Enable warnings" do
-        # TODO: implement
+        $VERBOSE = true
+      end
+
+      options.on("-W", "[level]",
+                 "Set warning level: 0=silence, 1=medium, 2=verbose (default)") do |l|
+        case l
+        when "0"
+          $VERBOSE = nil
+        when "1"
+          $VERBOSE = false
+        when nil
+          $VERBOSE = true
+        else
+          # MRI -h says -W2 sets $VERBOSE to true, but behaviorally
+          # any value >= 2 sets $VERBOSE to true.
+          $VERBOSE = true
+        end
       end
 
       options.on "--version", "Display the version" do
@@ -244,22 +260,6 @@ containing the Rubinius standard library files.
 
       # TODO: convert all these to -X options
       options.doc "\nRubinius options"
-      options.on "--debug", "Launch the debugger" do
-        require 'debugger/interface'
-        Rubinius::Debugger::CmdLineInterface.new
-        @debugging = true
-      end
-
-      options.on "--remote-debug", "Run the program under the control of a remote debugger" do
-        require 'debugger/debug_server'
-        if port = (argv.first =~ /^\d+$/ and argv.shift)
-          $DEBUG_SERVER = Rubinius::Debugger::Server.new(port.to_i)
-        else
-          $DEBUG_SERVER = Rubinius::Debugger::Server.new
-        end
-        $DEBUG_SERVER.listen
-        @debugging = true
-      end
 
       options.on "--dc", "Display debugging information for the compiler" do
         puts "[Compiler debugging enabled]"
@@ -280,8 +280,11 @@ containing the Rubinius standard library files.
         @no_rbc = true
       end
 
-      options.on("-P", "Run the profiler") do
-        require 'profile'
+      @profile = Rubinius::Config['profile']
+
+      options.on "-P", "Run the profiler" do
+        puts "[WARN] -P is deprecated, please use -Xprofile"
+        @profile = true
       end
 
       options.on "--vv", "Display version and extra info" do
@@ -322,6 +325,10 @@ containing the Rubinius standard library files.
       options.parse ARGV
 
       handle_rubyopt(options)
+
+      if @profile
+        require 'profile'
+      end
     end
 
     def handle_rubyopt(options)
@@ -390,6 +397,15 @@ containing the Rubinius standard library files.
       end
     end
 
+    def debugger
+      @stage = "running the debugger"
+
+      if Rubinius::Config['debug']
+        require 'debugger'
+        Debugger.start
+      end
+    end
+
     # Require any -r arguments
     def requires
       @stage = "requiring command line files"
@@ -401,15 +417,7 @@ containing the Rubinius standard library files.
     def evals
       @stage = "evaluating command line code"
 
-      @evals.each do |code|
-        eval(code, TOPLEVEL_BINDING) do |compiled_method|
-          if @verbose_eval
-# Disabled until and if generating sexps is re-enabled. --rue
-#            p code.to_sexp("(eval)", 1)
-            puts compiled_method.decode
-          end
-        end
-      end
+      eval(@evals.join("\n"), TOPLEVEL_BINDING, "-e", 1)
     rescue SystemExit => e
       @exit_code = e.status
     end
@@ -495,7 +503,7 @@ containing the Rubinius standard library files.
         Stats::GC.new.show
       end
     rescue Object => e
-      e.render "An exception occured #{@stage}"
+      e.render "An exception occurred #{@stage}"
       @exit_code = 1
     end
 
@@ -513,6 +521,7 @@ containing the Rubinius standard library files.
       preload
       options
       load_paths
+      debugger
       requires
       evals
       script
@@ -524,8 +533,8 @@ containing the Rubinius standard library files.
     rescue SyntaxError => e
       show_syntax_error(e)
 
-      puts "\nBacktrace:"
-      puts e.awesome_backtrace.show
+      STDERR.puts "\nBacktrace:"
+      STDERR.puts e.awesome_backtrace.show
       @exit_code = 1
 
     rescue Object => e
