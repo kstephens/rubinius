@@ -233,7 +233,7 @@ module Rubinius
         out.puts "----------------------------------------------------------"
 
         primary   = "%-7s%6s %8.2f %9.2f   %8d           %s [%d]\n"
-        secondary = "              %8.2f %9.2f   %8d/%-8d       %s [%d]\n"
+        secondary = "              %8.2f %9.2f   %8d/%-8d       %s%s\n"
 
         indexes.each do |id|
           method = data[id]
@@ -245,7 +245,7 @@ module Rubinius
                                   calls,
                                   caller[:edges_calls],
                                   caller[:name],
-                                  caller[:index]
+                                  graph_method_index(caller[:index])
           end
 
           out.printf primary, ("[%d]" % method[:index]),
@@ -265,7 +265,7 @@ module Rubinius
                                     calls,
                                     edge[:called],
                                     edge[:name],
-                                    edge[:index]
+                                    graph_method_index(edge[:index])
             end
           end
 
@@ -273,6 +273,10 @@ module Rubinius
         end
 
         epilogue data.size, total_calls
+      end
+
+      def graph_method_index(index)
+        index ? " [#{index}]" : ""
       end
 
       HEADER_INDEX = {
