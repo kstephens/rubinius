@@ -117,7 +117,7 @@ end
   F_LC         = 'f'.freeze
 
   PAD_SPACE    = "::#{self.name}::SPACE".freeze
-  PAD_PLUS    = "::#{self.name}::PLUS".freeze
+  PAD_PLUS     = "::#{self.name}::PLUS".freeze
   PAD_ZERO     = "::#{self.name}::ZERO".freeze
   PAD_DOTDOT   = "::#{self.name}::DOTDOT".freeze
 
