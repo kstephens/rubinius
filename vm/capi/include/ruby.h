@@ -351,9 +351,9 @@ struct RFloat {
 
 #define RFLOAT(d)       capi_rfloat_struct(d)
 
-// To provide nicer error reporting
-#define RHASH(obj) assert("RHASH() is not supported")
-#define RHASH_TBL(obj) assert("RHASH_TBL() is not supported")
+// Do not define these messages as strings. We want a syntax error.
+#define RHASH(obj)      ({ C-API RHASH() is not supported in Rubinius })
+#define RHASH_TBL(obj)  ({ C-API RHASH_TBL() is not supported in Rubinius })
 
 struct RIO {
   VALUE handle;
@@ -1135,8 +1135,8 @@ VALUE rb_uint2big(unsigned long number);
   int     rb_io_fd(VALUE io);
 #define HAVE_RB_IO_FD 1
 
-  void    rb_io_wait_readable(int fd);
-  void    rb_io_wait_writable(int fd);
+  int     rb_io_wait_readable(int fd);
+  int     rb_io_wait_writable(int fd);
 
   void    rb_io_set_nonblock(rb_io_t* io);
   void    rb_io_check_readable(rb_io_t* io);
@@ -1361,6 +1361,9 @@ VALUE rb_uint2big(unsigned long number);
   /** Returns a Struct with the specified fields. */
   VALUE rb_struct_define(const char *name, ...);
 
+  /** Sets the $KCODE variable. */
+  void    rb_set_kcode(const char *code);
+
   /** Returns a pointer to a persistent char [] that contains the same data as
    * that contained in the Ruby string. The buffer is flushed to the string
    * when control returns to Ruby code. The buffer is updated with the string
@@ -1560,6 +1563,9 @@ VALUE rb_uint2big(unsigned long number);
 
   /** Call #to_sym on object. */
   ID      rb_to_id(VALUE object_handle);
+
+  /** Converts an object to an Integer by calling #to_int. */
+  VALUE   rb_to_int(VALUE object_handle);
 
   /** Module#undefine_method. Objects of class will not respond to name. @see rb_remove_method */
   void    rb_undef_method(VALUE module_handle, const char* name);

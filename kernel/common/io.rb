@@ -1409,6 +1409,9 @@ class IO
 
       reopen_io io
       Rubinius::Unsafe.set_class self, io.class
+      if io.respond_to?(:path)
+        @path = io.path
+      end
     else
       flush unless closed?
 
@@ -1416,7 +1419,7 @@ class IO
       if mode.equal? undefined
         mode = @mode
       else
-        mode = IO.parse_mode(mode) & ACCMODE
+        mode = IO.parse_mode(mode)
       end
 
       reopen_path(StringValue(other), mode | CREAT)
@@ -1629,6 +1632,16 @@ class IO
     prim_write(data)
   end
 
+  def write_nonblock(data)
+    data = String data
+    return 0 if data.length == 0
+
+    ensure_open_and_writable
+    @ibuffer.unseek!(self) unless @sync
+
+    raw_write(data)
+  end
+
   def close
     begin
       flush
@@ -1638,8 +1651,6 @@ class IO
 
     return nil
   end
-
-  alias_method :write_nonblock, :write
 
 end
 

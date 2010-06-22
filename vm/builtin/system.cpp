@@ -125,27 +125,44 @@ namespace rubinius {
     LLVMState::shutdown(state);
 #endif
 
+    SignalHandler::shutdown();
+
     // TODO Need to stop and kill off any ruby threads!
     // We haven't run into this because exec is almost always called
     // after fork(), which pulls over just one thread anyway.
 
-    std::size_t argc = args->size();
+    size_t argc = args->size();
+
+    char** argv = new char*[argc + 1];
 
     /* execvp() requires a NULL as last element */
-    std::vector<char*> argv((argc + 1), NULL);
+    argv[argc] = NULL;
 
-    for (std::size_t i = 0; i < argc; ++i) {
+    for(size_t i = 0; i < argc; i++) {
       /* strdup should be OK. Trying to exec with strings containing NUL == bad. --rue */
-      argv[i] = ::strdup(as<String>(args->get(state, i))->c_str());
+      argv[i] = strdup(as<String>(args->get(state, i))->c_str());
     }
+
+    void* old_handlers[NSIG];
 
     // Reset all signal handlers to the defaults, so any we setup in Rubinius
     // won't leak through.
     for(int i = 0; i < NSIG; i++) {
-      signal(i, SIG_DFL);
+      old_handlers[i] = (void*)signal(i, SIG_DFL);
     }
 
-    (void) ::execvp(path->c_str(), &argv[0]); /* std::vector is contiguous. --rue */
+    (void)::execvp(path->c_str(), argv);
+
+    // UG. Disaster.
+    //
+    // Clean up and let the caller know their unix system is
+    // crumbling around them.
+
+    for(int i = 0; i < NSIG; i++) {
+      signal(i, (void(*)(int))old_handlers[i]);
+    }
+
+    delete[] argv;
 
     /* execvp() returning means it failed. */
     Exception::errno_error(state, "execvp(2) failed");
@@ -185,6 +202,8 @@ namespace rubinius {
     Object* output;
     if(WIFEXITED(status)) {
       output = Fixnum::from(WEXITSTATUS(status));
+    } else if(WIFSIGNALED(status)) {
+      output = Fixnum::from(1000 + WTERMSIG(status));
     } else {
       output = Qnil;
     }
@@ -244,6 +263,8 @@ namespace rubinius {
 
       state->shared.reinit();
 
+      SignalHandler::on_fork();
+
       // Re-initialize LLVM
 #ifdef ENABLE_LLVM
       LLVMState::on_fork(state);
@@ -267,9 +288,11 @@ namespace rubinius {
     // in File#ininitialize). If we decided to ignore some GC.start calls
     // by usercode trying to be clever, we can use force to know that we
     // should NOT ignore it.
-    state->om->collect_young_now = true;
-    state->om->collect_mature_now = true;
-    state->interrupts.set_perform_gc();
+    if(RTEST(force) || state->shared.config.gc_honor_start) {
+      state->om->collect_young_now = true;
+      state->om->collect_mature_now = true;
+      state->interrupts.set_perform_gc();
+    }
     return Qnil;
   }
 
@@ -538,6 +561,25 @@ namespace rubinius {
       TypeInfo* ti = state->om->type_info[type];
       if(ti) {
         method->specialize(state, ti);
+      }
+    }
+
+    if(Class* cls = try_as<Class>(mod)) {
+      if(!kind_of<MetaClass>(cls) && cls->type_info()->type == Object::type) {
+        Array* ary = cls->seen_ivars();
+        if(ary->nil_p()) {
+          ary = Array::create(state, 5);
+          cls->seen_ivars(state, ary);
+        }
+
+        Tuple* lits = method->literals();
+        for(size_t i = 0; i < lits->num_fields(); i++) {
+          if(Symbol* sym = try_as<Symbol>(lits->at(state, i))) {
+            if(RTEST(sym->is_ivar_p(state))) {
+              if(!ary->includes_p(state, sym)) ary->append(state, sym);
+            }
+          }
+        }
       }
     }
 

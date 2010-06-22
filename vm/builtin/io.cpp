@@ -76,7 +76,7 @@ namespace rubinius {
 
   namespace {
     /** Utility function used by IO::select, returns highest descriptor. */
-    static inline native_int hidden_fd_set_from_array(VM* state,
+    static inline native_int fd_set_from_array(VM* state,
                                Object* maybe_descriptors, fd_set* set)
     {
       if(NULL == set) {
@@ -99,22 +99,22 @@ namespace rubinius {
     }
 
     /** Utility function used by IO::select, returns Array of IOs that were set. */
-    static inline Array* hidden_reject_unset_fds(VM* state,
+    static inline Array* reject_unset_fds(VM* state,
                            Object* maybe_originals, fd_set* set)
     {
-      if(NULL == set) {
-        return Array::create(state, 0);
-      }
+      if(NULL == set) return Array::create(state, 0);
 
       Array* originals = as<Array>(maybe_originals);
-      Array* selected = Array::create(state, originals->size());
+
+      // A single value is the most common, so prime for that.
+      Array* selected = Array::create(state, 1);
 
       for(std::size_t i = 0; i < originals->size(); ++i) {
         IO* io = as<IO>(originals->get(state, i));
 
         int fd = io->to_fd();
         if(fd < 0 || FD_ISSET(fd, set)) {
-          selected->set(state, i, io);
+          selected->append(state, io);
         }
       }
 
@@ -147,12 +147,12 @@ namespace rubinius {
     native_int candidate = 0;
 
     /* Build the sets, track the highest descriptor number. These handle NULLs */
-    highest = hidden_fd_set_from_array(state, readables, maybe_read_set);
+    highest = fd_set_from_array(state, readables, maybe_read_set);
 
-    candidate = hidden_fd_set_from_array(state, writables, maybe_write_set);
+    candidate = fd_set_from_array(state, writables, maybe_write_set);
     highest = candidate > highest ? candidate : highest;
 
-    candidate = hidden_fd_set_from_array(state, errorables, maybe_error_set);
+    candidate = fd_set_from_array(state, errorables, maybe_error_set);
     highest = candidate > highest ? candidate : highest;
 
     struct timeval future;
@@ -171,13 +171,12 @@ namespace rubinius {
       timeradd(&future, &limit, &future);
     }
 
-    WaitingForSignal waiter;
     native_int events;
 
 
     /* And the main event, pun intended */
     retry:
-    state->install_waiter(waiter);
+    state->interrupt_with_signal();
     state->thread->sleep(state, Qtrue);
 
     {
@@ -217,9 +216,9 @@ namespace rubinius {
     Array* output = Array::create(state, 3);
 
     /* These handle NULL sets. */
-    output->set(state, 0, hidden_reject_unset_fds(state, readables, maybe_read_set));
-    output->set(state, 1, hidden_reject_unset_fds(state, writables, maybe_write_set));
-    output->set(state, 2, hidden_reject_unset_fds(state, errorables, maybe_error_set));
+    output->set(state, 0, reject_unset_fds(state, readables, maybe_read_set));
+    output->set(state, 1, reject_unset_fds(state, writables, maybe_write_set));
+    output->set(state, 2, reject_unset_fds(state, errorables, maybe_error_set));
 
     return output;
   }
@@ -436,10 +435,8 @@ namespace rubinius {
 
     OnStack<1> variables(state, buffer);
 
-    WaitingForSignal waiter;
-
   retry:
-    state->install_waiter(waiter);
+    state->interrupt_with_signal();
     state->thread->sleep(state, Qtrue);
 
     {
@@ -450,17 +447,20 @@ namespace rubinius {
     state->thread->sleep(state, Qfalse);
     state->clear_waiter();
 
-    buffer->unpin();
-
     if(bytes_read == -1) {
       if(errno == EINTR) {
         if(state->check_async(calling_environment)) goto retry;
+
       } else {
         Exception::errno_error(state, "read(2) failed");
       }
 
+      buffer->unpin();
+
       return NULL;
     }
+
+    buffer->unpin();
 
     if(bytes_read == 0) {
       return Qnil;
@@ -585,6 +585,14 @@ namespace rubinius {
     return Integer::from(state, buf->size() - left);
   }
 
+  Object* IO::write_nonblock(STATE, String* buf) {
+    set_nonblock(state);
+
+    int n = ::write(descriptor_->to_native(), buf->c_str(), buf->size());
+    if(n == -1) Exception::errno_error(state, "write_nonblock");
+    return Fixnum::from(n);
+  }
+
   Object* IO::blocking_read(STATE, Fixnum* bytes) {
     String* str = String::create(state, bytes);
 
@@ -682,10 +690,8 @@ namespace rubinius {
     ssize_t bytes_read;
     native_int t = type->to_native();
 
-    WaitingForSignal waiter;
-
   retry:
-    state->install_waiter(waiter);
+    state->interrupt_with_signal();
     state->thread->sleep(state, Qtrue);
 
     {
@@ -945,7 +951,6 @@ failed: /* try next '*' position */
 
   /** Socket methods */
   Object* IO::accept(STATE, CallFrame* calling_environment) {
-    WaitingForSignal waiter;
     int fd = descriptor()->to_native();
     int new_fd = 0;
     bool set = false;
@@ -954,7 +959,7 @@ failed: /* try next '*' position */
     socklen_t sock_len = sizeof(socka);
 
   retry:
-    state->install_waiter(waiter);
+    state->interrupt_with_signal();
     state->thread->sleep(state, Qtrue);
 
     {
@@ -1029,7 +1034,6 @@ failed: /* try next '*' position */
 
   Object* IOBuffer::fill(STATE, IO* io, CallFrame* calling_environment) {
     ssize_t bytes_read;
-    WaitingForSignal waiter;
     native_int fd = io->descriptor()->to_native();
 
     IOBuffer* self = this;
@@ -1041,7 +1045,7 @@ failed: /* try next '*' position */
     if(self->left() < count) count = self->left();
 
   retry:
-    state->install_waiter(waiter);
+    state->interrupt_with_signal();
     state->thread->sleep(state, Qtrue);
 
     {

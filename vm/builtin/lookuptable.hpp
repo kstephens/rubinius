@@ -2,7 +2,11 @@
 #define RBX_BUILTIN_LOOKUPTABLE_HPP
 
 #include "builtin/object.hpp"
+#include "builtin/tuple.hpp"
+#include "builtin/integer.hpp"
+
 #include "type_info.hpp"
+#include "object_utils.hpp"
 
 namespace rubinius {
 
@@ -96,7 +100,7 @@ namespace rubinius {
     // Ruby.primitive :lookuptable_keys
     Array* all_keys(STATE);
 
-    Array* filtered_keys(STATE, ObjectMatcher& match);
+    Array* filtered_keys(STATE, ObjectMatcher& match, Array* ary=0);
 
     static Object* get_value(STATE, LookupTableBucket* entry);
 
@@ -116,7 +120,51 @@ namespace rubinius {
       virtual ~CollectAction() {}
     };
 
-    Array* collect(STATE, LookupTable* tbl, CollectAction& action);
+    Array* collect(STATE, LookupTable* tbl, CollectAction& action, Array* ary=0);
+
+    class iterator {
+      LookupTable* tbl_;
+      LookupTableBucket* bucket_;
+      int index_;
+      int total_;
+
+    public:
+      iterator(LookupTable* tbl)
+        : tbl_(tbl)
+        , bucket_(0)
+        , index_(-1)
+        , total_(tbl->bins()->to_native())
+      {}
+
+      bool advance() {
+        if(index_ >= total_) return false;
+
+        if(bucket_) {
+          bucket_ = try_as<LookupTableBucket>(bucket_->next());
+        }
+
+        while(!bucket_) {
+          index_++;
+          if(index_ >= total_) return false;
+          bucket_ = try_as<LookupTableBucket>(tbl_->values()->at(index_));
+        }
+
+        return true;
+      }
+
+      LookupTableBucket* bucket() {
+        return bucket_;
+      }
+
+      Object* key() {
+        return bucket_->key();
+      }
+
+      Object* value() {
+        return bucket_->value();
+      }
+
+    };
 
     class Info : public TypeInfo {
     public:

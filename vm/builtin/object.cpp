@@ -221,12 +221,35 @@ namespace rubinius {
       return Qnil;
     }
 
-    if(type_id() == Object::type) return get_table_ivar(state, sym);
+    switch(type_id()) {
+    case Object::type:
+      return get_table_ivar(state, sym);
+    case PackedObject::type:
+      {
+        LookupTable* tbl = this->reference_class()->packed_ivar_info();
 
+        LookupTableBucket* entry = tbl->find_entry(state, sym);
+        if(entry->nil_p()) {
+          return get_table_ivar(state, sym);
+        }
+
+        Fixnum* which = try_as<Fixnum>(entry->value());
+
+        Object** baa = reinterpret_cast<Object**>(pointer_to_body());
+        Object* obj = baa[which->to_native()];
+        if(obj == Qundef) return Qnil;
+        return obj;
+      }
+    default:
+      break;
+    }
+
+    /*
     // Handle packed objects in a unique way.
     if(PackedObject* po = try_as<PackedObject>(this)) {
       return po->get_packed_ivar(state, sym);
     }
+    */
 
     // We might be trying to access a slot, so try that first.
 
@@ -275,9 +298,11 @@ namespace rubinius {
     return table_ivar_defined(state, sym);
   }
 
-  Object* Object::ivar_names(STATE) {
-    Array* ary = Array::create(state, 3);
+  Array* Object::ivar_names(STATE) {
+    return ivar_names(state, Array::create(state, 3));
+  }
 
+  Array* Object::ivar_names(STATE, Array* ary) {
     // We don't check slots, because we don't advertise them
     // as normal ivars.
     class ivar_match : public ObjectMatcher {
@@ -294,7 +319,7 @@ namespace rubinius {
     if(!reference_p()) {
       LookupTable* tbl = try_as<LookupTable>(G(external_ivars)->fetch(state, this));
       if(tbl) {
-        ary->concat(state, tbl->filtered_keys(state, match));
+        tbl->filtered_keys(state, match, ary);
       }
       return ary;
     }
@@ -305,9 +330,9 @@ namespace rubinius {
     }
 
     if(CompactLookupTable* tbl = try_as<CompactLookupTable>(ivars())) {
-      ary->concat(state, tbl->filtered_keys(state, match));
+      tbl->filtered_keys(state, match, ary);
     } else if(LookupTable* tbl = try_as<LookupTable>(ivars())) {
-      ary->concat(state, tbl->filtered_keys(state, match));
+      tbl->filtered_keys(state, match, ary);
     }
 
     return ary;

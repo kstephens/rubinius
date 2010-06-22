@@ -59,6 +59,7 @@ namespace rubinius {
     , run_signals_(false)
     , shared(shared)
     , waiter_(NULL)
+    , interrupt_with_signal_(false)
     , om(shared.om)
     , interrupts(shared.interrupts)
     , check_local_interrupts(false)
@@ -68,6 +69,7 @@ namespace rubinius {
   {
     probe.set(Qnil, &globals().roots);
     set_stack_size(cStackDepthMax);
+    os_thread_ = pthread_self(); // initial value
   }
 
   void VM::discard(VM* vm) {
@@ -163,6 +165,7 @@ namespace rubinius {
   }
 
   void VM::set_current(VM* vm) {
+    vm->os_thread_ = pthread_self();
     _current_vm.set(vm);
   }
 
@@ -187,8 +190,7 @@ namespace rubinius {
 
   Class* VM::new_basic_class(Class* sup) {
     Class *cls = om->new_object_enduring<Class>(G(klass));
-    cls->set_class_id(shared.inc_class_count());
-    cls->set_packed_size(0);
+    cls->init(shared.inc_class_count());
 
     if(sup->nil_p()) {
       cls->instance_type(this, Fixnum::from(ObjectType));
@@ -402,17 +404,29 @@ namespace rubinius {
     waiter_ = &waiter;
   }
 
-  bool VM::wakeup() {
-    if(waiter_) {
-      waiter_->run();
-      waiter_ = NULL;
-      return true;
-    }
+  void VM::interrupt_with_signal() {
+    interrupt_with_signal_ = true;
+  }
 
-    return false;
+  bool VM::wakeup() {
+    if(interrupt_with_signal_) {
+      pthread_kill(os_thread_, SIGVTALRM);
+      return true;
+    } else {
+      // Use a local here because waiter_ can get reset to NULL by another thread
+      // We can't use a mutex here because this is called from inside a
+      // signal handler.
+      if(Waiter* w = waiter_) {
+        w->run();
+        return true;
+      }
+
+      return false;
+    }
   }
 
   void VM::clear_waiter() {
+    interrupt_with_signal_ = false;
     waiter_ = NULL;
   }
 

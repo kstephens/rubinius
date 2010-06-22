@@ -4,11 +4,6 @@ require 'rbconfig'
 require 'tempfile'
 require 'fileutils'
 
-unless !defined?(RUBY_ENGINE) || (RUBY_ENGINE == 'ruby' && RUBY_VERSION < '1.9.0')
-  STDERR.puts "Sorry, for now please build rubinius using ruby 1.8"
-  exit 1
-end
-
 root = File.expand_path File.dirname(__FILE__)
 
 require File.join(root, "kernel", "delta", "options")
@@ -19,11 +14,30 @@ class Configure
     @defines = []
     @config = File.join(root, "config.rb")
 
+    # TODO: conditionalize for Windows
+    @host = `./rakelib/config.guess`.chomp
+    /([^-]+)-([^-]+)-(.*)/ =~ @host
+    @cpu, @vendor, @os = $1, $2, $3
+
+    # Compiler to use
+    @compiler = ENV['CC'] || 'gcc'
+
     # LLVM settings
-    @llvm           = :no
-    @llvm_path      = nil
-    @llvm_configure = nil
-    @llvm_svn_dir   = File.join(root, "vm", "external_libs", "llvm")
+    @use_llvm               = true
+    @llvm                   = :no
+    @llvm_path              = nil
+    @llvm_configure         = nil
+    @llvm_skip_system       = false
+    @llvm_skip_prebuilt     = false
+    @llvm_prebuilt_name     = nil
+    @llvm_system_name       = get_system_name
+    @llvm_source            = "llvm-2.6-source.tar.bz2"
+    @llvm_asset_path        = "http://asset.rubini.us/prebuilt"
+    @llvm_generic_prebuilt  = "llvm-#{@host}.tar.bz2"
+    @llvm_parent_path       = File.join(root, "vm", "external_libs")
+    @llvm_default           = File.join(@llvm_parent_path, "llvm")
+    @llvm_prebuilt_path     = File.join(@llvm_parent_path, "prebuilt")
+    @llvm_include_path      = File.join(@llvm_default, "include")
 
     # File system paths
     @bindir       = root + "/bin"
@@ -45,18 +59,13 @@ class Configure
     @libversion = "1.0"
     @version = "#{@libversion}.1"
     @release_date = "2010-06-03"
-    @config_version = 9
+    @config_version = 10
 
     if !ENV['RELEASE'] and File.directory?(root + "/.git")
       @buildrev = `git rev-list --all | head -n1`.chomp
     else
       @buildrev = "release"
     end
-
-    # TODO: conditionalize for Windows
-    @host = `./rakelib/config.guess`.chomp
-    /([^-]+)-([^-]+)-(.*)/ =~ @host
-    @cpu, @vendor, @os = $1, $2, $3
 
     # TODO: add conditionals for platforms
     if Config::CONFIG["build_os"] =~ /darwin/
@@ -74,9 +83,11 @@ class Configure
     o = Rubinius::Options.new "Usage: configure [options]", 30
     o.left_align
 
-    o.doc " LLVM settings"
+    o.doc " Compiler settings"
 
-    @use_llvm = true
+    o.on "--cc", "COMPILER", "Compiler to use (eg gcc, clang)" do |cc|
+      @compiler = cc
+    end
 
     o.on "--disable-llvm", "Don't build with LLVM" do
       @use_llvm = false
@@ -86,17 +97,28 @@ class Configure
       @use_llvm = true
     end
 
-    @skip_system = false
     o.on "--skip-system", "Don't consider a system LLVM installation" do
-      @skip_system = true
+      @llvm_skip_system = true
     end
 
-    o.on "--llvm-path", "PATH", "Where to find LLVM" do |dir|
+    o.on "--skip-prebuilt", "Don't try to use a prebuilt version of LLVM" do
+      @llvm_skip_prebuilt = true
+    end
+
+    o.on "--system-name", "NAME", "Name of OS (eg fedora-8, ubuntu-10.04)" do |name|
+      @llvm_system_name = name
+    end
+
+    o.on "--prebuilt-name", "NAME", "Full name of LLVM prebuilt archive" do |name|
+      @llvm_prebuilt_name = name
+    end
+
+    o.on "--llvm-path", "PATH", "File system path to the directory containing LLVM" do |dir|
       @llvm_path = dir
     end
 
     o.on "--update-prebuilt", "Update prebuilt LLVM packages from the internet" do
-      update_prebuilt
+      update_prebuilt @llvm_generic_prebuilt, true
     end
 
     o.doc "\n File system paths for installing Rubinius"
@@ -250,22 +272,21 @@ class Configure
   # an MD5 checksum file exists for the library, the checksum of the library
   # is compared and the update fails if it does not match.  If no MD5 checksum
   # file exists, the library is used without check.
-  def update_prebuilt
-    file = "llvm-#{@host}.tar.bz2"
-    full_path = "vm/external_libs/prebuilt/#{file}"
+  def update_prebuilt(file, warn)
+    full_path = File.join @llvm_prebuilt_path, file
     md5_path = "#{full_path}.md5"
 
     dir = File.dirname full_path
 
     Dir.mkdir dir unless File.exists? dir
 
-    url = "http://asset.rubini.us/prebuilt/#{file}"
+    url = File.join @llvm_asset_path, file
 
     unless File.exists? full_path
       download url, full_path
 
       unless File.exists? full_path
-        puts "ERROR. No #{file} available on server."
+        puts "ERROR. No #{file} available on server." if warn
         return false
       end
     end
@@ -289,18 +310,18 @@ class Configure
   end
 
   def setup_source
-    url = "http://asset.rubini.us/prebuilt/llvm-2.6-source.tar.bz2"
-    path = "vm/external_libs/prebuilt/llvm-2.6-source.tar.bz2"
+    url = File.join @llvm_asset_path, @llvm_source
+    path = File.join @llvm_prebuilt_path, @llvm_source
 
     puts "  Downloading #{url}..."
     return false unless download(url, path)
 
     if File.exists?(path)
       print "  Unpacking prebuilt LLVM source: "
-      system "cd vm/external_libs; tar xjf prebuilt/llvm-2.6-source.tar.bz2"
+      system "cd #{@llvm_parent_path}; tar xjf #{path}"
       puts "done!"
 
-      if File.exists?("vm/external_libs/llvm/include")
+      if File.exists?(@llvm_include_path)
         puts "  Code appears to be proper svn tree."
       else
         puts "  Code doesn't appear to be proper LLVM tree!"
@@ -313,20 +334,39 @@ class Configure
 
   end
 
-  def setup_prebuilt
-    puts "  Checking for prebuilt LLVM build..."
-    file = "vm/external_libs/prebuilt/llvm-#{@host}.tar.bz2"
+  def prebuilt_files
+    files = [@llvm_generic_prebuilt]
 
-    update_prebuilt unless File.exists?(file)
-
-    if File.exists?(file)
-      print "  Unpacking prebuilt LLVM for #{@host}: "
-      system "cd vm/external_libs; mkdir llvm; cd llvm; tar xjf ../prebuilt/llvm-#{@host}.tar.bz2"
-      puts "done!"
-      @llvm = :prebuilt
-      return true
+    # If we have a system name, try to find a prebuilt specifically
+    # for this system first.
+    if @llvm_system_name
+      files.unshift "llvm-#{@host}-#{@llvm_system_name}.tar.bz2"
     end
 
+    # If the user specified a name, try that before anything.
+    files.unshift @llvm_prebuilt_name if @llvm_prebuilt_name
+
+    files
+  end
+
+  def setup_prebuilt
+    puts "  Checking for prebuilt LLVM package..."
+
+    prebuilt_files.each do |file|
+      path = File.join @llvm_prebuilt_path, file
+
+      update_prebuilt file, false unless File.exists?(path)
+
+      if File.exists?(path)
+        print "  Unpacking prebuilt LLVM: #{file}: "
+        system "cd #{@llvm_parent_path}; mkdir llvm; cd llvm; tar xjf #{path}"
+        puts "done!"
+        @llvm = :prebuilt
+        return true
+      end
+    end
+
+    puts "  Unable to download any LLVM prebuilt"
     return false
   end
 
@@ -353,9 +393,9 @@ class Configure
 
   def setup_auto
     print "  Checking for existing LLVM tree: "
-    if File.directory?(@llvm_svn_dir)
+    if File.directory?(@llvm_default)
       puts "found!"
-      if File.exists?(File.join(@llvm_svn_dir, "Makefile.common"))
+      if File.exists?(File.join(@llvm_default, "Makefile.common"))
         @llvm = :svn
       else
         @llvm = :prebuilt
@@ -376,11 +416,8 @@ class Configure
       return
     end
 
-    unless @skip_system
-      return if setup_config
-    end
-
-    return if setup_prebuilt
+    return if !@llvm_skip_system && setup_config
+    return if !@llvm_skip_prebuilt && setup_prebuilt
     return if setup_source
 
     puts "WARNING: Unable to configure for LLVM, disabling support."
@@ -444,7 +481,7 @@ class Configure
 
     tf.close
 
-    `#{compiler} -S -o - -x c #{c_includes} #{env('CFLAGS')} #{tf.path} 2>&1`
+    `#{@compiler} -S -o - -x c #{c_includes} #{env('CFLAGS')} #{tf.path} 2>&1`
     status = ($?.exitstatus == 0)
 
     tf.unlink
@@ -477,8 +514,38 @@ class Configure
     detect_features
   end
 
-  def compiler
-    ENV['CC'] || "gcc"
+  def which_ruby
+    if Object.const_defined?(:RUBY_ENGINE)
+      @which_ruby = RUBY_ENGINE.to_sym
+    else
+      @which_ruby = :ruby
+    end
+  end
+
+  # Records the full path to the ruby executable that runs this configure
+  # script. That path will be made available to the rest of the build system
+  # so the same version of ruby is invoked as needed.
+  def build_ruby
+    bin = Config::CONFIG["RUBY_INSTALL_NAME"] || Config::CONFIG["ruby_install_name"]
+    bin << (Config::CONFIG['EXEEXT'] || Config::CONFIG['exeext'] || '')
+    File.join(Config::CONFIG['bindir'], bin)
+  end
+
+  def get_system_name
+    return unless @os =~ /linux/
+    return unless File.exists? "/etc/issue"
+
+    data = IO.readlines("/etc/issue").first
+    data =~ /([^ ]+)[^\d\.]*([\d\.]*)/
+
+    name = $1.downcase
+    version = $2
+
+    if name == "debian" and File.exists? "/etc/debian_version"
+      version = IO.read("/etc/debian_version").split.first.gsub(/\W/, "-")
+    end
+
+    return "#{name}-#{version}"
   end
 
   def write_config
@@ -491,9 +558,11 @@ class Configure
       f.puts <<-EOC
 module Rubinius
   BUILD_CONFIG = {
+    :which_ruby     => :#{which_ruby},
+    :build_ruby     => "#{build_ruby}",
     :llvm           => :#{@llvm},
     :llvm_configure => "#{@llvm_configure}",
-    :compiler       => "#{compiler()}",
+    :compiler       => "#{@compiler}",
     :defines        => #{@defines.inspect},
     :host           => "#{@host}",
     :cpu            => "#{@cpu}",
@@ -557,6 +626,11 @@ end
   end
 
   def run
+    unless which_ruby == :ruby or which_ruby == :rbx
+      STDERR.puts "Sorry, building Rubinius requires MRI or Rubinius"
+      exit 1
+    end
+
     options
     parse ARGV
     process

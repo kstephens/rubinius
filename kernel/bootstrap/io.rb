@@ -78,6 +78,11 @@ class IO
     raise PrimitiveFailure, "IO#read_if_available primitive failed"
   end
 
+  def raw_write(str)
+    Ruby.primitive :io_write_nonblock
+    raise PrimitiveFailure, "IO#write_nonblock primitive failed"
+  end
+
   def reopen_io(other)
     Ruby.primitive :io_reopen
     raise ArgumentError, "IO#prim_reopen only accepts an IO object"

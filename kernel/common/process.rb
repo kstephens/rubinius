@@ -68,12 +68,22 @@ module Process
         status = 1
       end
 
+      # TODO should we call back into the Loader to run finalizers and such?
+      until Rubinius::AtExit.empty?
+        begin
+          Rubinius::AtExit.shift.call
+        rescue SystemExit => e
+          status = e.status
+        end
+      end
+
+      ObjectSpace.run_finalizers
+
       # Do not use Kernel.exit. This raises a SystemExit exception, which
       # will run ensure blocks. This is not what MRI does and causes bugs
       # in programs. See issue http://github.com/evanphx/rubinius/issues#issue/289 for
       # an example
 
-      # TODO should we call back into the Loader to run finalizers and such?
       Kernel.exit! status
     end
     pid
@@ -87,6 +97,7 @@ module Process
   def self.kill(sig, pid)
     use_process_group = false
     sig = sig.to_s if sig.kind_of?(Symbol)
+
     if sig.kind_of?(String)
       if sig[0] == ?-
         sig = sig[1..-1]
@@ -103,9 +114,12 @@ module Process
         use_process_group = true
       end
     end
-    pid = -pid if use_process_group
+
     raise ArgumentError unless number
+
+    pid = -pid if use_process_group
     ret = FFI::Platform::POSIX.kill(pid, number)
+
     case ret
     when 0
       return 1
