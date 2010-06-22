@@ -71,6 +71,7 @@ regexp.rbc
 selector.rbc
 signal.rbc
 sprintf.rbc
+sprintf_compiler.rbc
 symbol.rbc
 taskprobe.rbc
 thread.rbc

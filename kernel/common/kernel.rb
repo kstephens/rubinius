@@ -175,7 +175,7 @@ module Kernel
   module_function :printf
 
   def sprintf(str, *args)
-    Rubinius::SprintfCompiler.fmt_splat(target, *args)
+    Rubinius::SprintfCompiler.fmt_splat(str, *args)
   end
   alias_method :format, :sprintf
   module_function :sprintf

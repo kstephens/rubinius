@@ -151,12 +151,15 @@ task :todos do
   sh "grep", "-Rn", "TODO", "kernel"
 end
 
-desc "Create Rubinus::SprintfCompiler"
+desc "Create Rubinius::SprintfCompiler"
 task :sprintf_compiler do
-  if ! File.exist?(file = "kernel/common/sprintf_compiler.rb")
-    File.open(file, "w+") do | fh |
+  src = "../ruby_sprintf_compiler/lib/sprintf_compiler.rb"
+  dst = "kernel/common/sprintf_compiler.rb"
+  if ! File.exist?(dst) || (File.mtime(src) > File.mtime(dst))
+    $stdout.puts "  Creating #{dst} from #{src}"
+    File.open(dst, "w+") do | fh |
       fh.puts "module Rubinius"
-      fh.puts File.read("../ruby_sprintf_compiler/lib/sprintf_compiler.rb")
+      fh.puts File.read(src)
       fh.puts "end # module" 
     end
   end

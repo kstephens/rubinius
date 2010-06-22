@@ -254,8 +254,9 @@ module Rubinius
       when ?o, ?x, ?X, ?b, ?B
         val = get_number(val)
         unless @flags_space || @flags_plus
-          ret = Number.new(val, RADIXES[typec]).rep
-          chr = val < 0 ? (RADIXES[typec] - 1).to_s(RADIXES[typec]) : ZERO
+          rad = RADIXES[typec]
+          ret = Number.new(val, rad).rep
+          chr = val < 0 ? (rad - 1).to_s(rad) : ZERO
           ret = pad(ret, width, precision, chr)
           ret = (ALTERNATIVES[typec] ||= ''.freeze) + ret if @flags_alternative
         else
@@ -403,7 +404,7 @@ module Rubinius
     end
 
     class Number
-      attr_reader :number, :radix, :pad
+      # attr_reader :number, :radix, :pad
 
       def initialize(number, radix)
         @number = number
