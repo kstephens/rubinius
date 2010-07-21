@@ -2,6 +2,7 @@
 #include "vm/object_utils.hpp"
 #include "objectmemory.hpp"
 #include "configuration.hpp"
+#include "on_stack.hpp"
 
 #include "builtin/class.hpp"
 #include "builtin/compiledmethod.hpp"
@@ -99,15 +100,55 @@ namespace rubinius {
     building_ = true;
   }
 
-  Object* Class::allocate(STATE) {
+  Object* Class::allocate(STATE, CallFrame* calling_environment) {
     if(type_info_->type == PackedObject::type) {
 use_packed:
       assert(packed_size_ > 0);
+
+      // Pull the size out into a local to deal with this moving later on.
+      uint32_t size = packed_size_;
+
       PackedObject* obj = reinterpret_cast<PackedObject*>(
-          state->om->new_object_fast(this, packed_size_, type_info_->type));
+                            state->local_slab().allocate(size));
+
+      if(likely(obj)) {
+        obj->init_header(this, YoungObjectZone, PackedObject::type);
+      } else {
+        if(state->shared.om->refill_slab(state->local_slab())) {
+          obj = reinterpret_cast<PackedObject*>(state->local_slab().allocate(size));
+
+          if(likely(obj)) {
+            obj->init_header(this, YoungObjectZone, PackedObject::type);
+          } else {
+            obj = reinterpret_cast<PackedObject*>(
+                state->om->new_object_fast(this, size, PackedObject::type));
+          }
+        } else {
+          state->shared.om->collect_young_now = true;
+
+          Class* self = this;
+
+          OnStack<1> os(state, self);
+
+          state->collect_maybe(calling_environment);
+
+          // Don't use 'this' after here! it's been moved! use 'self'!
+
+          obj = reinterpret_cast<PackedObject*>(state->local_slab().allocate(size));
+
+          if(likely(obj)) {
+            obj->init_header(self, YoungObjectZone, PackedObject::type);
+          } else {
+            obj = reinterpret_cast<PackedObject*>(
+                state->om->new_object_fast(self, size, PackedObject::type));
+          }
+        }
+      }
+
+      // Don't use 'this' !!! The above code might have GC'd
 
       uintptr_t body = reinterpret_cast<uintptr_t>(obj->body_as_array());
-      for(size_t i = 0; i < packed_size_ - sizeof(ObjectHeader);
+      for(size_t i = 0; i < size - sizeof(ObjectHeader);
           i += sizeof(Object*)) {
         Object** pos = reinterpret_cast<Object**>(body + i);
         *pos = Qundef;
@@ -118,18 +159,16 @@ use_packed:
       Exception::type_error(state, "direct allocation disabled");
       return Qnil;
     } else if(!building_) {
-      return state->om->new_object_fast(this,
+      return state->om->new_object_typed(this,
           type_info_->instance_size, type_info_->type);
     } else {
       if(type_info_->type == Object::type) {
-        if(!seen_ivars_->nil_p()) {
-          if(auto_pack(state)) goto use_packed;
-        }
+        if(auto_pack(state)) goto use_packed;
       }
 
       building_ = false;
 
-      return state->om->new_object_fast(this,
+      return state->om->new_object_typed(this,
           type_info_->instance_size, type_info_->type);
     }
   }
@@ -194,20 +233,27 @@ use_packed:
       int slot = 0;
 
       while(!mod->nil_p()) {
+        Array* info = 0;
+
         if(Class* cls = try_as<Class>(mod)) {
-          Array* info = cls->seen_ivars();
+          info = cls->seen_ivars();
+        } else if(IncludedModule* im = try_as<IncludedModule>(mod)) {
+          info = im->module()->seen_ivars();
+        }
 
-          if(!info->nil_p()) {
-            for(size_t i = 0; i < info->size(); i++) {
-              if(Symbol* sym = try_as<Symbol>(info->get(state, i))) {
-                bool found = false;
-                lt->fetch(state, sym, &found);
+        if(info && !info->nil_p()) {
+          for(size_t i = 0; i < info->size(); i++) {
+            if(Symbol* sym = try_as<Symbol>(info->get(state, i))) {
+              bool found = false;
+              lt->fetch(state, sym, &found);
 
-                if(!found) {
-                  lt->store(state, sym, Fixnum::from(slot++));
-                }
+              if(!found) {
+                lt->store(state, sym, Fixnum::from(slot++));
               }
             }
+
+            // Limit the number of packed ivars to 25.
+            if(slot > 25) break;
           }
         }
 

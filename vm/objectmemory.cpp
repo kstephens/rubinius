@@ -8,6 +8,7 @@
 #include "gc/immix.hpp"
 #include "gc/inflated_headers.hpp"
 #include "gc/walker.hpp"
+#include "on_stack.hpp"
 
 #include "config_parser.hpp"
 
@@ -21,6 +22,7 @@
 #include "builtin/ffi_pointer.hpp"
 #include "builtin/data.hpp"
 #include "builtin/dir.hpp"
+#include "builtin/array.hpp"
 
 #include "capi/handle.hpp"
 #include "configuration.hpp"
@@ -40,6 +42,9 @@ namespace rubinius {
     , mark_(1)
     , code_manager_(&state->shared)
     , allow_gc_(true)
+    , slab_size_(4096)
+    , running_finalizers_(false)
+
     , collect_young_now(false)
     , collect_mature_now(false)
     , state(state)
@@ -73,7 +78,6 @@ namespace rubinius {
   }
 
   ObjectMemory::~ObjectMemory() {
-
     mark_sweep_->free_objects();
 
     // TODO free immix data
@@ -85,8 +89,14 @@ namespace rubinius {
     delete immix_;
     delete mark_sweep_;
     delete young_;
+
+    // Must be last
+    // delete inflated_headers_;
+
   }
 
+  // WARNING: This returns an object who's body may not have been initialized.
+  // It is the callers duty to initialize it.
   Object* ObjectMemory::new_object_fast(Class* cls, size_t bytes, object_type type) {
     if(Object* obj = young_->raw_allocate(bytes, &collect_young_now)) {
       objects_allocated++;
@@ -94,13 +104,23 @@ namespace rubinius {
 
       if(collect_young_now) state->interrupts.set_perform_gc();
       obj->init_header(cls, YoungObjectZone, type);
-      obj->clear_fields(bytes);
       return obj;
     } else {
       return new_object_typed(cls, bytes, type);
     }
   }
 
+  bool ObjectMemory::refill_slab(gc::Slab& slab) {
+    void* addr = young_->allocate_for_slab(slab_size_);
+
+    if(!addr) return false;
+
+    objects_allocated += slab.allocations();
+
+    slab.refill(addr, slab_size_);
+
+    return true;
+  }
 
   void ObjectMemory::set_young_lifetime(size_t age) {
     young_->set_lifetime(age);
@@ -164,6 +184,15 @@ namespace rubinius {
     young_collections++;
 
     data.global_cache()->prune_young();
+
+    if(data.threads()) {
+      for(std::list<ManagedThread*>::iterator i = data.threads()->begin();
+          i != data.threads()->end();
+          i++) {
+        assert(refill_slab((*i)->local_slab()));
+      }
+    }
+
   }
 
   void ObjectMemory::collect_mature(GCData& data) {
@@ -233,6 +262,8 @@ namespace rubinius {
       current = handle;
       handle = static_cast<capi::Handle*>(handle->next());
 
+      if(!handle->in_use_p()) continue;
+
       Object* obj = current->object();
 
       assert(obj->inflated_header_p());
@@ -257,6 +288,13 @@ namespace rubinius {
 
       Object* obj = current->object();
       total++;
+
+      if(!current->in_use_p()) {
+        count++;
+        handles->remove(current);
+        delete current;
+        continue;
+      }
 
       // Strong references will already have been updated.
       if(!current->weak_p()) {
@@ -329,7 +367,7 @@ namespace rubinius {
 #endif
 
     } else {
-      obj = young_->allocate(bytes);
+      obj = young_->allocate(bytes, &collect_young_now);
       if(unlikely(obj == NULL)) {
         collect_young_now = true;
         state->interrupts.set_perform_gc();
@@ -399,7 +437,6 @@ namespace rubinius {
     obj->klass(this, cls);
 
     obj->set_obj_type(type);
-    obj->set_requires_cleanup(type_info[type]->instances_need_cleanup);
 
     return obj;
   }
@@ -417,7 +454,6 @@ namespace rubinius {
     obj->klass(this, cls);
 
     obj->set_obj_type(type);
-    obj->set_requires_cleanup(type_info[type]->instances_need_cleanup);
 
     return obj;
   }
@@ -460,7 +496,6 @@ namespace rubinius {
     obj->klass(this, cls);
 
     obj->set_obj_type(type);
-    obj->set_requires_cleanup(type_info[type]->instances_need_cleanup);
 
     return obj;
   }
@@ -489,6 +524,14 @@ namespace rubinius {
     code_manager_.add_resource(cr);
   }
 
+  void* ObjectMemory::young_start() {
+    return young_->start_address();
+  }
+
+  void* ObjectMemory::yound_end() {
+    return young_->last_address();
+  }
+
   void ObjectMemory::needs_finalization(Object* obj, FinalizerFunction func) {
     FinalizeObject fi;
     fi.object = obj;
@@ -499,13 +542,78 @@ namespace rubinius {
     finalize_.push_back(fi);
   }
 
-  void ObjectMemory::run_finalizers(STATE) {
+  void ObjectMemory::set_ruby_finalizer(Object* obj, Object* fin) {
+    // See if there already one.
+    for(std::list<FinalizeObject>::iterator i = finalize_.begin();
+        i != finalize_.end(); i++)
+    {
+      if(i->object == obj) {
+        if(fin->nil_p()) {
+          finalize_.erase(i);
+        } else {
+          i->ruby_finalizer = fin;
+        }
+        return;
+      }
+    }
+
+    // Ok, create it.
+
+    FinalizeObject fi;
+    fi.object = obj;
+    fi.status = FinalizeObject::eLive;
+
+    // Rubinius specific API. If the finalizer is the object, we're going to send
+    // the object __finalize__. We mark that the user wants this by putting Qtrue
+    // as the ruby_finalizer.
+    if(obj == fin) {
+      fi.ruby_finalizer = Qtrue;
+    } else {
+      fi.ruby_finalizer = fin;
+    }
+
+    // Makes a copy of fi.
+    finalize_.push_back(fi);
+  }
+
+  void ObjectMemory::run_finalizers(STATE, CallFrame* call_frame) {
+    if(running_finalizers_) return;
+    running_finalizers_ = true;
+
     for(std::list<FinalizeObject*>::iterator i = to_finalize_.begin();
         i != to_finalize_.end(); ) {
       FinalizeObject* fi = *i;
 
       if(fi->finalizer) {
         (*fi->finalizer)(state, fi->object);
+        // Unhook any handle used by fi->object so that we don't accidentally
+        // try and mark it later (after we've finalized it)
+        if(fi->object->inflated_header_p()) {
+          InflatedHeader* ih = fi->object->inflated_header();
+
+          if(capi::Handle* handle = ih->handle()) {
+            handle->forget_object();
+            ih->set_handle(0);
+          }
+        }
+
+        // If the object was remembered, unremember it.
+        if(fi->object->remembered_p()) {
+          unremember_object(fi->object);
+        }
+      } else if(fi->ruby_finalizer) {
+        // Rubinius specific code. If the finalizer is Qtrue, then
+        // send the object the finalize message
+        if(fi->ruby_finalizer == Qtrue) {
+          fi->object->send(state, call_frame, state->symbol("__finalize__"), true);
+        } else {
+          Array* ary = Array::create(state, 1);
+          ary->set(state, 0, fi->object->id(state));
+
+          OnStack<1> os(state, ary);
+
+          fi->ruby_finalizer->send(state, call_frame, state->symbol("call"), ary, Qnil, true);
+        }
       } else {
         std::cerr << "Unsupported object to be finalized: "
                   << fi->object->to_s(state)->c_str() << "\n";
@@ -516,6 +624,47 @@ namespace rubinius {
       i = to_finalize_.erase(i);
     }
 
+    running_finalizers_ = false;
+  }
+
+  void ObjectMemory::run_all_finalizers(STATE) {
+    if(running_finalizers_) return;
+    running_finalizers_ = true;
+
+    for(std::list<FinalizeObject>::iterator i = finalize_.begin();
+        i != finalize_.end(); )
+    {
+      FinalizeObject& fi = *i;
+
+      // Only finalize things that haven't been finalized.
+      if(fi.status != FinalizeObject::eFinalized) {
+        if(fi.finalizer) {
+          (*fi.finalizer)(state, fi.object);
+        } else if(fi.ruby_finalizer) {
+          // Rubinius specific code. If the finalizer is Qtrue, then
+          // send the object the finalize message
+          if(fi.ruby_finalizer == Qtrue) {
+            fi.object->send(state, 0, state->symbol("__finalize__"), true);
+          } else {
+            Array* ary = Array::create(state, 1);
+            ary->set(state, 0, fi.object->id(state));
+
+            OnStack<1> os(state, ary);
+
+            fi.ruby_finalizer->send(state, 0, state->symbol("call"), ary, Qnil, true);
+          }
+        } else {
+          std::cerr << "During shutdown, unsupported object to be finalized: "
+                    << fi.object->to_s(state)->c_str() << "\n";
+        }
+      }
+
+      fi.status = FinalizeObject::eFinalized;
+
+      i = finalize_.erase(i);
+    }
+
+    running_finalizers_ = false;
   }
 
   size_t& ObjectMemory::loe_usage() {

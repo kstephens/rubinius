@@ -222,6 +222,33 @@ namespace rubinius {
     return ret ? Qtrue : Qfalse;
   }
 
+  Object* String::secure_compare(STATE, String* other) {
+    size_t s1 = num_bytes()->to_native();
+    size_t s2 = other->num_bytes()->to_native();
+
+    size_t max = (s2 > s1) ? s2 : s1;
+
+    uint8_t* p1 = byte_address();
+    uint8_t* p2 = other->byte_address();
+
+    uint8_t* p1max = p1 + s1;
+    uint8_t* p2max = p2 + s2;
+
+    uint8_t sum = 0;
+
+    for(size_t i = 0; i < max; i++) {
+      uint8_t* c1 = p1 + i;
+      uint8_t* c2 = p2 + i;
+
+      uint8_t b1 = (c1 >= p1max) ? 0 : *c1;
+      uint8_t b2 = (c2 >= p2max) ? 0 : *c2;
+
+      sum |= (b1 ^ b2);
+    }
+
+    return (sum == 0) ? Qtrue : Qfalse;
+  }
+
   String* String::string_dup(STATE) {
     String* ns;
 
@@ -407,7 +434,9 @@ namespace rubinius {
       chr = str[i];
       seq = ++i < bytes ? str[i] : -1;
 
-      if(seq == '-') {
+      if(chr == '\\' && seq >= 0) {
+        continue;
+      } else if(seq == '-') {
         max = ++i < bytes ? str[i] : -1;
         if(max >= 0) {
           while(chr <= max) {
@@ -419,8 +448,6 @@ namespace rubinius {
           if(tr_data.assign(chr)) return tr_replace(state, &tr_data);
           if(tr_data.assign(seq)) return tr_replace(state, &tr_data);
         }
-      } else if(chr == '\\' && seq >= 0) {
-        continue;
       } else {
         if(tr_data.assign(chr)) return tr_replace(state, &tr_data);
       }

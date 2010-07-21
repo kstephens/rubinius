@@ -114,7 +114,7 @@ class Hash
   # Creates a fully-formed instance of Hash.
   def self.allocate
     hash = super()
-    Rubinius.privately { hash.setup }
+    Rubinius.privately { hash.__setup__ }
     hash
   end
 
@@ -128,8 +128,7 @@ class Hash
     return false unless other.size == size
 
     Thread.detect_recursion self, other do
-      i = to_iter
-      while entry = i.next(entry)
+      each_entry do |entry|
         other_entry = other.find_entry(entry.key)
 
         # Other doesn't even have this key
@@ -154,8 +153,7 @@ class Hash
     return false unless other.size == size
 
     Thread.detect_recursion self, other do
-      i = to_iter
-      while entry = i.next(entry)
+      each_entry do |entry|
         other_entry = other.find_entry(entry.key)
 
         # Other doesn't even have this key
@@ -171,8 +169,7 @@ class Hash
   def hash
     val = size
     Thread.detect_outermost_recursion self do
-      i = to_iter
-      while entry = i.next(entry)
+      each_entry do |entry|
         val ^= entry.key.hash
         val ^= entry.value.hash
       end
@@ -228,7 +225,7 @@ class Hash
   alias_method :__store__, :[]=
 
   def clear
-    setup
+    __setup__
     self
   end
 
@@ -287,31 +284,53 @@ class Hash
     self
   end
 
+  def each_entry
+    idx = 0
+    cap = @capacity
+    entries = @entries
+
+    while idx < cap
+      entry = entries[idx]
+      while entry
+        yield entry
+        entry = entry.next
+      end
+
+      idx += 1
+    end
+  end
+
   def each
     return to_enum :each unless block_given?
 
-    i = to_iter
-    while entry = i.next(entry)
-      yield [entry.key, entry.value]
+    idx = 0
+    cap = @capacity
+    entries = @entries
+
+    while idx < cap
+      entry = entries[idx]
+      while entry
+        yield [entry.key, entry.value]
+        entry = entry.next
+      end
+
+      idx += 1
     end
+
     self
   end
 
   def each_key
     return to_enum :each_key unless block_given?
 
-    i = to_iter
-    while entry = i.next(entry)
-      yield entry.key
-    end
+    each_entry { |e| yield e.key }
     self
   end
 
   def each_pair
     return to_enum :each_pair unless block_given?
 
-    i = to_iter
-    while entry = i.next(entry)
+    each_entry do |entry|
       yield entry.key, entry.value
     end
     self
@@ -320,8 +339,7 @@ class Hash
   def each_value
     return to_enum :each_value unless block_given?
 
-    i = to_iter
-    while entry = i.next(entry)
+    each_entry do |entry|
       yield entry.value
     end
     self
@@ -357,14 +375,15 @@ class Hash
   end
 
   def index(value)
-    i = to_iter
-    while entry = i.next(entry)
+    each_entry do |entry|
       return entry.key if entry.value == value
     end
     nil
   end
 
   def initialize(default = undefined, &block)
+    Ruby.check_frozen
+
     if !default.equal?(undefined) and block
       raise ArgumentError, "Specify a default or a block, not both"
     end
@@ -387,8 +406,7 @@ class Hash
   def inspect
     out = []
     return '{...}' if Thread.detect_recursion self do
-      i = to_iter
-      while entry = i.next(entry)
+      each_entry do |entry|
         str =  entry.key.inspect
         str << '=>'
         str << entry.value.inspect
@@ -400,8 +418,7 @@ class Hash
 
   def invert
     inverted = {}
-    i = to_iter
-    while entry = i.next(entry)
+    each_entry do |entry|
       inverted[entry.value] = entry.key
     end
     inverted
@@ -431,8 +448,7 @@ class Hash
 
   def merge!(other)
     other = Type.coerce_to other, Hash, :to_hash
-    i = other.to_iter
-    while entry = i.next(entry)
+    other.each_entry do |entry|
       key = entry.key
       if block_given? and key? key
         Ruby.check_frozen
@@ -468,7 +484,7 @@ class Hash
     capacity = @capacity
 
     # TODO: grow smaller too
-    setup @capacity * 2, @max_entries * 2, @size
+    __setup__ @capacity * 2, @max_entries * 2, @size
 
     i = -1
     while (i += 1) < capacity
@@ -541,9 +557,9 @@ class Hash
     other = Type.coerce_to other, Hash, :to_hash
     return self if self.equal? other
 
-    setup
-    i = other.to_iter
-    while entry = i.next(entry)
+    __setup__
+
+    other.each_entry do |entry|
       __store__ entry.key, entry.value
     end
 
@@ -562,8 +578,8 @@ class Hash
     return to_enum :select unless block_given?
 
     selected = []
-    i = to_iter
-    while entry = i.next(entry)
+
+    each_entry do |entry|
       if yield(entry.key, entry.value)
         selected << [entry.key, entry.value]
       end
@@ -593,14 +609,14 @@ class Hash
   # @max_entries is the maximum number of entries before redistributing.
   # @size is the number of pairs, equivalent to <code>hsh.size</code>.
   # @entrien is the vector of storage for the entry chains.
-  def setup(capacity=MIN_SIZE, max=MAX_ENTRIES, size=0)
+  def __setup__(capacity=MIN_SIZE, max=MAX_ENTRIES, size=0)
     @capacity = capacity
     @mask     = capacity - 1
     @max_entries = max
     @size     = size
     @entries  = Entries.new capacity
   end
-  private :setup
+  private :__setup__
 
   def sort(&block)
     to_a.sort(&block)
@@ -624,8 +640,7 @@ class Hash
   end
 
   def value?(value)
-    i = to_iter
-    while entry = i.next(entry)
+    each_entry do |entry|
       return true if entry.value == value
     end
     false

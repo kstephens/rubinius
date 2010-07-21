@@ -144,18 +144,24 @@
 
 // Kernel
 #define HAVE_RB_BLOCK_GIVEN_P              1
+#define HAVE_RB_NEED_BLOCK                 1
 #define HAVE_RB_BLOCK_PROC                 1
 #define HAVE_RB_ENSURE                     1
 #define HAVE_RB_EVAL_STRING                1
 #define HAVE_RB_RAISE                      1
+#define HAVE_RB_THROW                      1
 #define HAVE_RB_RESCUE                     1
 #define HAVE_RB_RESCUE2                    1
 #define HAVE_RB_SYS_FAIL                   1
 #define HAVE_RB_WARN                       1
 #define HAVE_RB_YIELD                      1
-
+#define HAVE_RB_YIELD_VALUES               1
 // GC
 #define HAVE_RB_GC_REGISTER_ADDRESS        1
+
+// Marshal
+#define HAVE_RB_MARSHAL_DUMP               1
+#define HAVE_RB_MARSHAL_LOAD               1
 
 // Module
 #define HAVE_RB_CONST_DEFINED              1

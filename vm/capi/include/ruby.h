@@ -33,6 +33,7 @@
 #include <sys/types.h>
 #include <unistd.h>
 #include <fcntl.h>
+#include <errno.h>
 
 #include "intern.h"
 #include "defines.h"
@@ -559,6 +560,8 @@ unsigned long long rb_num2ull(VALUE);
 #define NUM2ULL(x) rb_num2ull((VALUE)x)
 #define NUM2OFFT(x) ((off_t)NUM2LL(x))
 
+#define OFFT2NUM(x) LL2NUM((long long)x)
+
 /** Convert from a Float to a double */
 double rb_num2dbl(VALUE);
 #define NUM2DBL(x) rb_num2dbl((VALUE)(x))
@@ -818,6 +821,9 @@ VALUE rb_uint2big(unsigned long number);
 
   /** Return 1 if this send has a block, 0 otherwise. */
   int     rb_block_given_p();
+
+  /* raises a LocalJumpError if no block was given */
+  void    rb_need_block();
 
   /* Converts implicit block into a new Proc. */
   VALUE   rb_block_proc();
@@ -1250,6 +1256,13 @@ VALUE rb_uint2big(unsigned long number);
   NORETURN(void rb_raise(VALUE error_handle, const char* format_string, ...));
 
   /**
+   *  Transfer control to the end of the innermost catch block
+   *  waiting for the given symbol.
+   *  The given value is returned by the catch block.
+   */
+  NORETURN(void rb_throw(const char* symbol, VALUE result));
+
+  /**
    * Calls the function 'func', with arg1 as the argument.  If an exception
    * occurs during 'func', it calls 'raise_func' with arg2 as the argument.  The
    * return value of rb_rescue() is the return value from 'func' if no
@@ -1311,6 +1324,9 @@ VALUE rb_uint2big(unsigned long number);
 
   /** Returns the current $SAFE level. */
   int     rb_safe_level();
+
+  /* Marshals an object, optionally writing output to an IO */
+  VALUE   rb_marshal_dump(VALUE obj, VALUE io);
 
   /**
    *  Process arguments using a template rather than manually.
@@ -1573,6 +1589,7 @@ VALUE rb_uint2big(unsigned long number);
 
   /** Call block with given argument or raise error if no block given. */
   VALUE   rb_yield(VALUE argument_handle);
+  VALUE   rb_yield_values(int n, ...);
 
   VALUE   rb_apply(VALUE recv, ID mid, VALUE args);
 

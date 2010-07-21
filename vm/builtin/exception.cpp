@@ -155,6 +155,10 @@ namespace rubinius {
     RubyException::raise(make_exception(state, get_float_domain_error(state), reason));
   }
 
+  void Exception::range_error(STATE, const char* reason) {
+    RubyException::raise(make_exception(state, get_range_error(state), reason));
+  }
+
   void Exception::zero_division_error(STATE, const char* reason) {
     RubyException::raise(make_exception(state, get_zero_division_error(state), reason));
   }
@@ -179,7 +183,7 @@ namespace rubinius {
     RubyException::raise(make_exception(state, get_errno_error(state, Fixnum::from(errno)), strerror(errno)));
   }
 
-  void Exception::object_bounds_exceeded_error(STATE, Object* obj, size_t index) {
+  void Exception::object_bounds_exceeded_error(STATE, Object* obj, int index) {
     TypeInfo* info = state->find_type(obj->type_id()); // HACK use object
     std::ostringstream msg;
 
@@ -312,6 +316,10 @@ namespace rubinius {
 
   Class* Exception::get_float_domain_error(STATE) {
     return as<Class>(G(object)->get_const(state, "FloatDomainError"));
+  }
+
+  Class* Exception::get_range_error(STATE) {
+    return as<Class>(G(object)->get_const(state, "RangeError"));
   }
 
   Class* Exception::get_assertion_error(STATE) {

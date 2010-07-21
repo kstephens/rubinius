@@ -54,10 +54,6 @@ namespace rubinius {
     return state->globals().special_classes[((uintptr_t)this) & SPECIAL_CLASS_MASK].get();
   }
 
-  void Object::cleanup(STATE) {
-    type_info(state)->cleanup(this);
-  }
-
   Object* Object::duplicate(STATE) {
     if(!reference_p()) return this;
 
@@ -136,27 +132,23 @@ namespace rubinius {
       // and call, the wrong one will be called.
       if(LookupTable* lt = try_as<LookupTable>(other->ivars())) {
         ivars(state, lt->duplicate(state));
-        LookupTable* ld = as<LookupTable>(ivars());
 
         // We store the object_id in the ivar table, so nuke it.
 #ifndef RBX_OBJECT_ID_IN_HEADER
+        LookupTable* ld = as<LookupTable>(ivars());
         ld->remove(state, G(sym_object_id));
 #endif
-        ld->remove(state, state->symbol("frozen"));
-        ld->remove(state, state->symbol("capi_handle"));
       } else {
         // Use as<> so that we throw a TypeError if there is something else
         // here.
         CompactLookupTable* clt = as<CompactLookupTable>(other->ivars());
         ivars(state, clt->duplicate(state));
-        CompactLookupTable* ld = as<CompactLookupTable>(ivars());
 
         // We store the object_id in the ivar table, so nuke it.
 #ifndef RBX_OBJECT_ID_IN_HEADER
+        CompactLookupTable* ld = as<CompactLookupTable>(ivars());
         ld->remove(state, G(sym_object_id));
 #endif
-        ld->remove(state, state->symbol("frozen"));
-        ld->remove(state, state->symbol("capi_handle"));
       };
     }
 
@@ -775,8 +767,10 @@ namespace rubinius {
    *  write_barrier versions, which we do), or we have to include
    *  every header up front. We opt for the former.
    */
-  void Object::write_barrier(STATE, void* obj) {
-    state->om->write_barrier(this, reinterpret_cast<Object*>(obj));
+  void Object::inline_write_barrier_passed(STATE, void* obj) {
+    if(!remembered_p()) {
+      state->om->remember_object(this);
+    }
   }
 
   void Object::write_barrier(gc::WriteBarrier* wb, void* obj) {

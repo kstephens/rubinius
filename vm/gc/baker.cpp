@@ -20,9 +20,10 @@
 namespace rubinius {
   BakerGC::BakerGC(ObjectMemory *om, size_t bytes)
     : GarbageCollector(om)
-    , eden(bytes)
-    , heap_a(bytes / 2)
-    , heap_b(bytes / 2)
+    , full(bytes * 2)
+    , eden(full.allocate(bytes), bytes)
+    , heap_a(full.allocate(bytes / 2), bytes / 2)
+    , heap_b(full.allocate(bytes / 2), bytes / 2)
     , total_objects(0)
     , copy_spills_(0)
     , autotune_(false)
@@ -166,18 +167,36 @@ namespace rubinius {
     }
 
     for(capi::Handles::Iterator i(*data.handles()); i.more(); i.advance()) {
+      if(!i->in_use_p()) continue;
+
       if(!i->weak_p() && i->object()->young_object_p()) {
         i->set_object(saw_object(i->object()));
         assert(i->object()->inflated_header_p());
+
+      // Users manipulate values accessible from the data* within an
+      // RData without running a write barrier. Thusly if we see a mature
+      // rdata, we must always scan it because it could contain
+      // young pointers.
+      } else if(!i->object()->young_object_p() && i->is_rdata()) {
+        scan_object(i->object());
       }
 
       assert(i->object()->type_id() != InvalidType);
     }
 
     for(capi::Handles::Iterator i(*data.cached_handles()); i.more(); i.advance()) {
+      if(!i->in_use_p()) continue;
+
       if(!i->weak_p() && i->object()->young_object_p()) {
         i->set_object(saw_object(i->object()));
         assert(i->object()->inflated_header_p());
+
+      // Users manipulate values accessible from the data* within an
+      // RData without running a write barrier. Thusly if we see a mature
+      // rdata, we must always scan it because it could contain
+      // young pointers.
+      } else if(!i->object()->young_object_p() && i->is_rdata()) {
+        scan_object(i->object());
       }
 
       assert(i->object()->type_id() != InvalidType);
@@ -344,9 +363,30 @@ namespace rubinius {
   }
 
   void BakerGC::check_finalize() {
+    // If finalizers are running right now, just fixup any finalizer references
+    if(object_memory_->running_finalizers()) {
+      for(std::list<FinalizeObject>::iterator i = object_memory_->finalize().begin();
+          i != object_memory_->finalize().end();
+          i++) {
+        if(i->object) {
+          i->object = saw_object(i->object);
+        }
+
+        if(i->ruby_finalizer) {
+          i->ruby_finalizer = saw_object(i->ruby_finalizer);
+        }
+      }
+      return;
+    }
+
     for(std::list<FinalizeObject>::iterator i = object_memory_->finalize().begin();
-        i != object_memory_->finalize().end(); ) {
+        i != object_memory_->finalize().end(); )
+    {
       FinalizeObject& fi = *i;
+
+      if(i->ruby_finalizer) {
+        i->ruby_finalizer = saw_object(i->ruby_finalizer);
+      }
 
       bool remove = false;
 
@@ -355,18 +395,27 @@ namespace rubinius {
         switch(i->status) {
         case FinalizeObject::eLive:
           if(!i->object->forwarded_p()) {
-            i->queued();
-            object_memory_->to_finalize().push_back(&fi);
-          }
+            // Run C finalizers now rather that queue them.
+            if(i->finalizer) {
+              (*i->finalizer)(state(), i->object);
+              i->status = FinalizeObject::eFinalized;
+              remove = true;
+            } else {
+              i->queued();
+              object_memory_->to_finalize().push_back(&fi);
 
-          // We have to still keep it alive though until we finish with it.
-          i->object = saw_object(orig);
+              // We need to keep it alive still.
+              i->object = saw_object(orig);
+            }
+          } else {
+            // Still alive, update the reference.
+            i->object = saw_object(orig);
+          }
           break;
         case FinalizeObject::eQueued:
           // Nothing, we haven't gotten to it yet.
           // Keep waiting and keep i->object updated.
           i->object = saw_object(i->object);
-
           i->queue_count++;
           break;
         case FinalizeObject::eFinalized:
@@ -374,8 +423,9 @@ namespace rubinius {
             // finalized and done with.
             remove = true;
           } else {
-            // RESURECTION!
+            // RESURRECTION!
             i->queued();
+            i->object = saw_object(i->object);
           }
           break;
         }

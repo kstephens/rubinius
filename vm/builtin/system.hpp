@@ -118,6 +118,9 @@ namespace rubinius {
     // Ruby.primitive :vm_backtrace
     static Array* vm_backtrace(STATE, Fixnum* skip, Object* inc_vars, CallFrame* calling_environment);
 
+    // Ruby.primitive :vm_mri_backtrace
+    static Array* vm_mri_backtrace(STATE, Fixnum* skip, CallFrame* calling_environment);
+
     /** Return true if the profiler is available. */
     // Ruby.primitive :vm_profiler_instrumenter_available_p
     static Object* vm_profiler_instrumenter_available_p(STATE);
@@ -262,11 +265,14 @@ namespace rubinius {
     // Ruby.primitive :vm_dump_heap
     static Object* vm_dump_heap(STATE, String* path);
 
+    // Ruby.primitive :vm_set_finalizer
+    static Object* vm_set_finalizer(STATE, Object* obj, Object* fin);
+
   public:   /* Type info */
 
     class Info : public TypeInfo {
     public:
-      Info(object_type type, bool cleanup = false) : TypeInfo(type, cleanup) {}
+      Info(object_type type) : TypeInfo(type) {}
       virtual ~Info() {}
       virtual void auto_mark(Object* obj, ObjectMark& mark) {}
     };

@@ -36,6 +36,11 @@
 using namespace rubinius;
 
 extern "C" {
+
+  void rbx_jit_debug_spot(int spot) {
+    std::cout << "JIT DEBUG: hit spot: " << spot << "\n";
+  }
+
   Object* rbx_write_barrier(STATE, Object* obj, Object* val) {
     if(obj->zone() == UnspecifiedZone) return val;
     state->om->write_barrier(obj, val);
@@ -56,7 +61,15 @@ extern "C" {
   {
     // Use placement new to stick the class into data, which is on the callers
     // stack.
-    new(data) profiler::MethodEntry(state, msg, args, cm);
+    new(data) profiler::MethodEntry(state, msg, args, cm, true);
+  }
+
+  void rbx_begin_profiling_block(STATE, void* data, BlockEnvironment* env,
+                                 Module* mod, CompiledMethod* cm)
+  {
+    // Use placement new to stick the class into data, which is on the callers
+    // stack.
+    new(data) profiler::MethodEntry(state, env->top_scope()->method()->name(), mod, cm, true);
   }
 
   void rbx_end_profiling(profiler::MethodEntry* entry) {
@@ -299,9 +312,13 @@ extern "C" {
     return ary;
   }
 
-  Object* rbx_cast_for_multi_block_arg(STATE, Arguments& args) {
-    /* If there is only one argument and that thing is an array... */
-    if(args.total() == 1 && kind_of<Array>(args.get_argument(0))) {
+  Object* rbx_cast_for_multi_block_arg(STATE, CallFrame* call_frame, Arguments& args) {
+    /* If there is only one argument and that thing is an array...
+     AND the thing being invoked is not a lambda... */
+    if(!(call_frame->flags & CallFrame::cIsLambda) &&
+         args.total() == 1 &&
+         kind_of<Array>(args.get_argument(0)))
+    {
       return args.get_argument(0);
     }
 
@@ -848,7 +865,7 @@ extern "C" {
 
   Object* rbx_raise_return(STATE, CallFrame* call_frame, Object* top) {
     if(!(call_frame->flags & CallFrame::cIsLambda) &&
-       !call_frame->scope_still_valid(call_frame->scope->parent())) {
+       !call_frame->scope_still_valid(call_frame->top_scope(state))) {
       Exception* exc = Exception::make_exception(state, G(jump_error), "unexpected return");
       exc->locations(state, Location::from_call_stack(state, call_frame));
       state->thread_state()->raise_exception(exc);
@@ -882,7 +899,10 @@ extern "C" {
   }
 
   Object* rbx_continue_uncommon(STATE, CallFrame* call_frame,
-                                int32_t entry_ip, native_int sp)
+                                int32_t entry_ip, native_int sp,
+                                CallFrame* method_call_frame,
+                                int32_t unwind_count,
+                                int32_t* unwinds)
   {
     LLVMState::get(state)->add_uncommons_taken();
 
@@ -920,7 +940,10 @@ extern "C" {
       }
     }
 
-    return VMMethod::uncommon_interpreter(state, vmm, call_frame, entry_ip, sp);
+    return VMMethod::uncommon_interpreter(state, vmm, call_frame,
+                                          entry_ip, sp,
+                                          method_call_frame,
+                                          unwind_count, unwinds);
   }
 
   Object* rbx_restart_interp(STATE, CallFrame* call_frame, Dispatch& msg, Arguments& args) {

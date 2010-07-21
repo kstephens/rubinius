@@ -19,6 +19,13 @@ static VALUE kernel_spec_rb_block_given_p(VALUE self) {
 }
 #endif
 
+#ifdef HAVE_RB_NEED_BLOCK
+VALUE kernel_spec_rb_need_block(VALUE self) {
+  rb_need_block();
+  return Qnil;
+}
+#endif
+
 #ifdef HAVE_RB_BLOCK_PROC
 VALUE kernel_spec_rb_block_proc(VALUE self) {
   return rb_block_proc();
@@ -56,7 +63,29 @@ VALUE kernel_spec_rb_raise(VALUE self, VALUE hash) {
 }
 #endif
 
+#ifdef HAVE_RB_THROW
+VALUE kernel_spec_rb_throw(VALUE self, VALUE result) {
+  rb_throw("foo", result);
+  return ID2SYM(rb_intern("rb_throw_failed"));
+}
+#endif
+
 #ifdef HAVE_RB_RESCUE
+VALUE kernel_spec_call_proc_with_raised_exc(VALUE arg_array, VALUE raised_exc) {
+  VALUE argv[2];
+  int argc;
+
+  VALUE arg = rb_ary_pop(arg_array);
+  VALUE proc = rb_ary_pop(arg_array);
+
+  argv[0] = arg;
+  argv[1] = raised_exc;
+
+  argc = 2;
+
+  return rb_funcall2(proc, rb_intern("call"), argc, argv);
+}
+
 VALUE kernel_spec_rb_rescue(VALUE self, VALUE main_proc, VALUE arg,
                             VALUE raise_proc, VALUE arg2) {
   VALUE main_array = rb_ary_new();
@@ -68,7 +97,7 @@ VALUE kernel_spec_rb_rescue(VALUE self, VALUE main_proc, VALUE arg,
   rb_ary_push(raise_array, arg2);
 
   return rb_rescue(kernel_spec_call_proc, main_array,
-      kernel_spec_call_proc, raise_array);
+      kernel_spec_call_proc_with_raised_exc, raise_array);
 }
 #endif
 
@@ -108,12 +137,22 @@ static VALUE kernel_spec_rb_yield(VALUE self, VALUE obj) {
 }
 #endif
 
+#ifdef HAVE_RB_YIELD_VALUES
+static VALUE kernel_spec_rb_yield_values(VALUE self, VALUE obj1, VALUE obj2) {
+  return rb_yield_values(2, obj1, obj2);
+}
+#endif
+
 void Init_kernel_spec() {
   VALUE cls;
   cls = rb_define_class("CApiKernelSpecs", rb_cObject);
 
 #ifdef HAVE_RB_BLOCK_GIVEN_P
   rb_define_method(cls, "rb_block_given_p", kernel_spec_rb_block_given_p, 0);
+#endif
+
+#ifdef HAVE_RB_NEED_BLOCK
+  rb_define_method(cls, "rb_need_block", kernel_spec_rb_need_block, 0);
 #endif
 
 #ifdef HAVE_RB_BLOCK_PROC
@@ -130,6 +169,10 @@ void Init_kernel_spec() {
 
 #ifdef HAVE_RB_RAISE
   rb_define_method(cls, "rb_raise", kernel_spec_rb_raise, 1);
+#endif
+
+#ifdef HAVE_RB_THROW
+  rb_define_method(cls, "rb_throw", kernel_spec_rb_throw, 1);
 #endif
 
 #ifdef HAVE_RB_RESCUE
@@ -150,6 +193,10 @@ void Init_kernel_spec() {
 
 #ifdef HAVE_RB_YIELD
   rb_define_method(cls, "rb_yield", kernel_spec_rb_yield, 1);
+#endif
+
+#ifdef HAVE_RB_YIELD_VALUES
+  rb_define_method(cls, "rb_yield_values", kernel_spec_rb_yield_values, 2);
 #endif
 }
 

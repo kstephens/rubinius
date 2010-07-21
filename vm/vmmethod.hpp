@@ -7,6 +7,7 @@
 #include "gc/root.hpp"
 #include "primitives.hpp"
 #include "type_info.hpp"
+#include "unwind_info.hpp"
 
 #include "vm/builtin/compiledmethod.hpp"
 #include "gc/code_resource.hpp"
@@ -66,6 +67,7 @@ namespace rubinius {
     native_int number_of_locals;
 
     native_int call_count;
+    native_int uncommon_count;
 
     size_t number_of_caches_;
     InlineCache* caches;
@@ -78,7 +80,9 @@ namespace rubinius {
 #endif
 
     Symbol* name_;
-
+    uint64_t method_id_;
+  public:
+    bool debugging;
   public: // Methods
     static void init(STATE);
 
@@ -154,6 +158,10 @@ namespace rubinius {
       return name_;
     }
 
+    uint64_t method_id() {
+      return method_id_;
+    }
+
     void specialize(STATE, CompiledMethod* original, TypeInfo* ti);
     void compile(STATE);
     static Object* execute(STATE, CallFrame* call_frame, Dispatch& msg, Arguments& args);
@@ -187,9 +195,18 @@ namespace rubinius {
 
     static Object* debugger_interpreter(STATE, VMMethod* const vmm,
                                         InterpreterCallFrame* const call_frame);
+    static Object* debugger_interpreter_continue(STATE,
+                                       VMMethod* const vmm,
+                                       CallFrame* const call_frame,
+                                       int sp,
+                                       InterpreterState& is,
+                                       int current_unwind,
+                                       UnwindInfo* unwinds);
 
     static Object* uncommon_interpreter(STATE, VMMethod* const vmm,
-      CallFrame* const call_frame, int32_t entry_ip, native_int sp);
+      CallFrame* const call_frame, int32_t entry_ip, native_int sp,
+      CallFrame* const method_call_frame,
+      int32_t unwind_count, int32_t* unwinds);
 
     void setup_argument_handler(CompiledMethod* meth);
 

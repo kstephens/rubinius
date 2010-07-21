@@ -87,6 +87,45 @@ namespace rubinius {
     }
   };
 
+  class JITStackArgs {
+    bool from_unboxed_array_;
+    size_t count_;
+    std::vector<llvm::Value*> args_;
+
+  public:
+    JITStackArgs(size_t count)
+      : from_unboxed_array_(false)
+      , count_(count)
+      , args_(count)
+    {}
+
+    void set_from_unboxed_array() {
+      from_unboxed_array_ = true;
+    }
+
+    bool from_unboxed_array() {
+      return from_unboxed_array_;
+    }
+
+    void put(size_t idx, llvm::Value* val) {
+      if(idx < count_) {
+        args_[idx] = val;
+      }
+    }
+
+    llvm::Value* at(size_t idx) {
+      if(idx < count_) {
+        return args_[idx];
+      }
+
+      return 0;
+    }
+
+    size_t size() {
+      return count_;
+    }
+  };
+
   class JITMethodInfo {
     jit::Context& context_;
     llvm::Function* function_;
@@ -100,6 +139,7 @@ namespace rubinius {
     llvm::Value* profiling_entry_;
     llvm::Value* out_args_;
     llvm::Value* counter_;
+    llvm::Value* unwind_info_;
 
     JITMethodInfo* parent_info_;
     JITMethodInfo* creator_info_;
@@ -122,7 +162,7 @@ namespace rubinius {
     InlinePolicy* inline_policy;
     llvm::BasicBlock* fin_block;
     int called_args;
-    std::vector<llvm::Value*>* stack_args;
+    JITStackArgs* stack_args;
 
     JITMethodInfo* root;
 
@@ -170,6 +210,14 @@ namespace rubinius {
 
     llvm::Value* profiling_entry() {
       return profiling_entry_;
+    }
+
+    llvm::Value* unwind_info() {
+      return unwind_info_;
+    }
+
+    void set_unwind_info(llvm::Value* unwind) {
+      unwind_info_ = unwind;
     }
 
     void set_entry(llvm::BasicBlock* entry) {
@@ -225,6 +273,7 @@ namespace rubinius {
       vm_ = info.vm();
       out_args_ = info.out_args();
       counter_ = info.counter();
+      unwind_info_ = info.unwind_info();
 
       set_function(info.function());
     }
@@ -239,6 +288,17 @@ namespace rubinius {
 
     JITMethodInfo* parent_info() {
       return parent_info_;
+    }
+
+    llvm::Value* top_parent_call_frame() {
+      if(!parent_info_) return call_frame();
+
+      JITMethodInfo* info = parent_info_;
+      while(info->parent_info()) {
+        info = info->parent_info();
+      }
+
+      return info->call_frame();
     }
 
     bool for_inlined_method() {
@@ -330,6 +390,7 @@ namespace rubinius {
     int end_ip;
     bool reachable;
     bool landing_pad;
+    int exception_type;
 
   public:
     JITBasicBlock()
@@ -341,6 +402,7 @@ namespace rubinius {
       , end_ip(0)
       , reachable(false)
       , landing_pad(false)
+      , exception_type(-1)
     {}
 
     llvm::BasicBlock* entry() {
@@ -500,7 +562,7 @@ namespace rubinius {
     void compile_soon(STATE, CompiledMethod* cm, BlockEnvironment* block=0);
     void remove(llvm::Function* func);
 
-    CompiledMethod* find_candidate(CompiledMethod* start, CallFrame* call_frame);
+    CallFrame* find_candidate(CompiledMethod* start, CallFrame* call_frame);
     void compile_callframe(STATE, CompiledMethod* start, CallFrame* call_frame,
                            int primitive = -1);
 

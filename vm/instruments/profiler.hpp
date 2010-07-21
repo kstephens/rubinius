@@ -53,7 +53,10 @@ namespace rubinius {
       kSingleton,
       kBlock,
       kYoungGC,
-      kMatureGC
+      kMatureGC,
+      kNormalJIT,
+      kSingletonJIT,
+      kBlockJIT
     };
 
     class Method;
@@ -108,7 +111,7 @@ namespace rubinius {
       stats::StackTimer  timer;
 
     public:
-      Method(method_id id, Symbol* name, Symbol* container, Kind kind = kNormal)
+      Method(method_id id, Symbol* name, Symbol* container, Kind kind=kNormal)
         : id_(id)
         , name_(name)
         , container_(container)
@@ -181,8 +184,8 @@ namespace rubinius {
 
     public:
       MethodEntry(STATE, Dispatch& msg, Arguments& args);
-      MethodEntry(STATE, Dispatch& msg, Arguments& args, CompiledMethod* cm);
-      MethodEntry(STATE, Symbol* name, Module* module, CompiledMethod* cm);
+      MethodEntry(STATE, Dispatch& msg, Arguments& args, CompiledMethod* cm, bool jit=false);
+      MethodEntry(STATE, Symbol* name, Module* module, CompiledMethod* cm, bool jit=false);
       MethodEntry(STATE, Kind kind);
       ~MethodEntry();
 
@@ -214,12 +217,12 @@ namespace rubinius {
         current_ = method;
       }
 
-      method_id create_id(Symbol* container, Symbol* name, Kind kind);
-      Method* find_method(Symbol* container, Symbol* name, Kind kind);
+      method_id create_id(CompiledMethod* cm, Symbol* container, Symbol* name, Kind kind);
+      Method* find_method(CompiledMethod* cm, Symbol* container, Symbol* name, Kind kind);
 
       Symbol* module_name(Module* module);
-      Method* enter_method(Dispatch&, Arguments& args, CompiledMethod*);
-      Method* enter_block(Symbol* name, Module* module, CompiledMethod* cm);
+      Method* enter_method(Dispatch&, Arguments& args, CompiledMethod* cm, bool jit);
+      Method* enter_block(Symbol* name, Module* module, CompiledMethod* cm, bool jit);
       Method* get_method(CompiledMethod* cm, Symbol* name,
           Symbol* container, Kind kind);
 

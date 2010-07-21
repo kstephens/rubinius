@@ -21,9 +21,38 @@ extern "C" {
     return rb_funcall(block_handle, rb_intern("call"), 1, argument_handle);
   }
 
+  VALUE rb_yield_values(int n, ...) {
+    NativeMethodEnvironment* env = NativeMethodEnvironment::get();
+
+    if (!rb_block_given_p()) {
+      rb_raise(rb_eLocalJumpError, "no block given", 0);
+    }
+
+    VALUE* vars = reinterpret_cast<VALUE*>(alloca(sizeof(VALUE) * n));
+
+    va_list args;
+    va_start(args, n);
+
+    for(int i = 0; i < n; ++i) {
+      vars[i] = va_arg(args, VALUE);
+    }
+
+    va_end(args);
+
+    VALUE block_handle = env->get_handle(env->block());
+
+    return rb_funcall2(block_handle, rb_intern("call"), n, vars);
+  }
+
   int rb_block_given_p() {
     NativeMethodEnvironment* env = NativeMethodEnvironment::get();
     return RBX_RTEST(env->block());
+  }
+
+  void rb_need_block() {
+    if (!rb_block_given_p()) {
+      rb_raise(rb_eLocalJumpError, "no block given", 0);
+    }
   }
 
   VALUE rb_apply(VALUE recv, ID mid, VALUE args) {
@@ -59,6 +88,13 @@ extern "C" {
     capi::capi_raise_backend(exc);
 
     printf("rb_raise broken!\n");
+    exit(1);
+  }
+
+  void rb_throw(const char* symbol, VALUE result) {
+    rb_funcall(rb_mKernel, rb_intern("throw"), 2, ID2SYM(rb_intern(symbol)), result);
+
+    printf("rb_throw broken!\n");
     exit(1);
   }
 

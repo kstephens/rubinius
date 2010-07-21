@@ -74,6 +74,9 @@ namespace rubinius {
     // Ruby.primitive :string_equal
     Object* equal(STATE, String* other);
 
+    // Ruby.primitive :string_secure_compare
+    Object* secure_compare(STATE, String* other);
+
     // Returns the number of bytes this String contains
     size_t size() {
       return num_bytes_->to_native();
@@ -176,6 +179,9 @@ namespace rubinius {
 
     // Ruby.primitive :string_base64_decode
     static String* base64_decode(STATE, String* str);
+
+    // Ruby.primitive :string_unpack
+    Array* unpack(STATE, String *directives);
 
     class Info : public TypeInfo {
     public:

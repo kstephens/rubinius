@@ -267,24 +267,8 @@ module Kernel
   module_function :proc
 
   def caller(start=1, exclude_kernel=true)
-    ary = []
-    Rubinius::VM.backtrace(1)[start..-1].each do |l|
-      if exclude_kernel and l.method.file.to_s.prefix?("kernel/")
-        next
-      end
-
-      pos = l.position
-      meth = l.describe_method
-
-      case l.name
-      when :__script__, :__class_init__, :__module_init__
-        ary << pos
-      else
-        ary << "#{pos}:in `#{meth}'"
-      end
-    end
-
-    ary
+    # The + 1 is to skip this frame
+    return Rubinius.mri_backtrace(start + 1)
   end
   module_function :caller
 
@@ -396,6 +380,8 @@ module Kernel
   end
 
   def extend(*modules)
+    Ruby.check_frozen
+
     modules.reverse_each do |mod|
       mod.__send__(:extend_object, self)
       mod.__send__(:extended, self)
@@ -406,11 +392,24 @@ module Kernel
   alias_method :__extend__, :extend
 
   def inspect
-    return "..." if Thread.guarding? self
+    # The protocol here seems odd, but it's to match MRI.
 
     ivars = instance_variables
 
-    prefix = "#{self.class}:0x#{self.__id__.to_s(16)}"
+    # If this object has no ivars, then we call to_s and return that.
+    # NOTE MRI has an additional check for when to call to_s. It also does:
+    # "if (TYPE(obj) == T_OBJECT ..." ie, for all builtin types, don't run
+    # this code. I'm going to ignore that for now, since the builtin types
+    # generally have their own inspect anyway, and if for some reason things
+    # get here, thats ok.
+    return to_s if ivars.empty?
+
+    prefix = "#<#{self.class}:0x#{self.__id__.to_s(16)}"
+
+    # Otherwise, if it's already been inspected, return the ...
+    return "#{prefix} ...>" if Thread.guarding? self
+
+    # Otherwise, gather the ivars and show them.
     parts = []
 
     Thread.recursion_guard self do
@@ -420,9 +419,9 @@ module Kernel
     end
 
     if parts.empty?
-      "#<#{prefix}>"
+      "#{prefix}>"
     else
-      "#<#{prefix} #{parts.join(' ')}>"
+      "#{prefix} #{parts.join(' ')}>"
     end
   end
 
@@ -537,7 +536,17 @@ module Kernel
 
   def methods(all=true)
     methods = singleton_methods(all)
-    methods |= Rubinius.object_metaclass(self).instance_methods(true) if all
+
+    if all
+      # We have to special case these because unlike true, false, nil,
+      # .object_metaclass raises a TypeError.
+      case self
+      when Fixnum, Symbol
+        methods |= self.class.instance_methods(true)
+      else
+        methods |= Rubinius.object_metaclass(self).instance_methods(true)
+      end
+    end
 
     return methods if kind_of?(ImmediateValue)
 

@@ -9,6 +9,7 @@
 
 #include "builtin/methodtable.hpp"
 #include "builtin/nativefunction.hpp"
+#include "builtin/lookuptable.hpp"
 
 #include "ffi_util.hpp"
 
@@ -17,12 +18,13 @@ namespace rubinius {
     Class* klass = cache_->dominating_class();
     if(!klass) {
       if(ops_.state()->config().jit_inline_debug) {
-        ops_.state()->log() << "NOT inlining: "
+        context_.inline_log("NOT inlining")
           << ops_.state()->symbol_cstr(cache_->name)
-          << ". Cache contains " << cache_->classes_seen() << "\n";
+          << ". Cache contains " << cache_->classes_seen() << " entries\n";
 
         for(int i = 0; i < cache_->classes_seen(); i++) {
-          ops_.state()->log() << "  " << ops_.state()->symbol_cstr(cache_->tracked_class(i)->name())
+          context_.inline_log("class")
+            << ops_.state()->symbol_cstr(cache_->tracked_class(i)->name())
             << " " << cache_->tracked_class_hits(i) << "\n";
         }
       }
@@ -37,7 +39,7 @@ namespace rubinius {
 
     if(!meth) {
       if(ops_.state()->config().jit_inline_debug) {
-        ops_.state()->log() << "NOT inlining: "
+        context_.inline_log("NOT inlining")
           << ops_.state()->symbol_cstr(cache_->name)
           << ". Inliner error, method missing.\n";
       }
@@ -46,7 +48,7 @@ namespace rubinius {
 
     if(instance_of<Module>(defined_in)) {
       if(ops_.state()->config().jit_inline_debug) {
-        ops_.state()->log() << "NOT inlining: "
+        context_.inline_log("NOT inlining")
           << ops_.state()->symbol_cstr(cache_->name)
           << ". Not inlining methods defined in Modules.\n";
       }
@@ -79,11 +81,13 @@ namespace rubinius {
         InlinePolicy* policy = ops_.inline_policy();
         assert(policy);
 
-        InlineDecision decision = policy->inline_p(vmm);
+        InlineOptions opts;
+
+        InlineDecision decision = policy->inline_p(vmm, opts);
         if(decision != cInline) {
           if(ops_.state()->config().jit_inline_debug) {
 
-            ops_.state()->log() << "NOT inlining: "
+            context_.inline_log("NOT inlining")
               << ops_.state()->symbol_cstr(cm->scope()->module()->name())
               << "#"
               << ops_.state()->symbol_cstr(cm->name())
@@ -97,6 +101,9 @@ namespace rubinius {
                 << policy->max_size();
             } else if(decision == cTooComplex) {
               ops_.state()->log() << "too complex";
+              if(!opts.allow_blocks) {
+                ops_.state()->log() << " (block not allowed)";
+              }
             } else {
               ops_.state()->log() << "no policy";
             }
@@ -106,7 +113,7 @@ namespace rubinius {
         }
 
         if(ops_.state()->config().jit_inline_debug) {
-          ops_.state()->log() << "inlining: "
+          context_.inline_log("inlining")
             << ops_.state()->symbol_cstr(cm->scope()->module()->name())
             << "#"
             << ops_.state()->symbol_cstr(cm->name())
@@ -132,7 +139,7 @@ namespace rubinius {
         return true;
       } else {
         if(ops_.state()->config().jit_inline_debug) {
-          ops_.state()->log() << "NOT inlining: "
+          context_.inline_log("NOT inlining")
             << ops_.state()->symbol_cstr(cm->scope()->module()->name())
             << "#"
             << ops_.state()->symbol_cstr(cm->name())
@@ -146,7 +153,8 @@ namespace rubinius {
     } else if(NativeFunction* nf = try_as<NativeFunction>(meth)) {
       if(inline_ffi(klass, nf)) {
         if(ops_.state()->config().jit_inline_debug) {
-          ops_.state()->log() << "inlining: FFI call to "
+          context_.inline_log("inlining")
+            << "FFI call to "
             << ops_.state()->symbol_cstr(nf->name())
             << "() into "
             << ops_.state()->symbol_cstr(ops_.method_name())
@@ -157,7 +165,7 @@ namespace rubinius {
       }
     } else {
       if(ops_.state()->config().jit_inline_debug) {
-        ops_.state()->log() << "NOT inlining: "
+        context_.inline_log("NOT inlining")
           << ops_.state()->symbol_cstr(klass->name())
           << "#"
           << ops_.state()->symbol_cstr(cache_->name)
@@ -176,7 +184,7 @@ remember:
 
   void Inliner::inline_block(JITInlineBlock* ib, Value* self) {
     if(ops_.state()->config().jit_inline_debug) {
-      ops_.state()->log() << "inlining block into: "
+      context_.inline_log("inlining block into")
         << ops_.state()->symbol_cstr(ops_.method_name())
         << "\n";
     }
@@ -217,7 +225,7 @@ remember:
 
   void Inliner::inline_trivial_method(Class* klass, CompiledMethod* cm) {
     if(ops_.state()->config().jit_inline_debug) {
-      ops_.state()->log() << "inlining: "
+      context_.inline_log("inlining")
         << ops_.state()->symbol_cstr(cm->scope()->module()->name())
         << "#"
         << ops_.state()->symbol_cstr(cm->name())
@@ -279,7 +287,8 @@ remember:
     if(count_ != 1) return;
 
     if(ops_.state()->config().jit_inline_debug) {
-      ops_.state()->log() << "inlining: writer to '"
+      context_.inline_log("inlining")
+        << "writer to '"
         << ops_.state()->symbol_cstr(acc->name())
         << "' on "
         << ops_.state()->symbol_cstr(klass->name())
@@ -333,14 +342,14 @@ remember:
     if(count_ != 0) return;
 
     if(ops_.state()->config().jit_inline_debug) {
-      ops_.state()->log() << "inlining: read to '"
+      context_.inline_log("inlining")
+        << "read to '"
         << ops_.state()->symbol_cstr(acc->name())
         << "' on "
         << ops_.state()->symbol_cstr(klass->name())
         << " in "
         << "#"
-        << ops_.state()->symbol_cstr(ops_.method_name())
-        << "\n";
+        << ops_.state()->symbol_cstr(ops_.method_name());
     }
 
     ops_.state()->add_accessor_inlined();
@@ -360,28 +369,61 @@ remember:
     if(it != ti->slots.end()) {
       int offset = ti->slot_locations[it->second];
       ivar = ops_.get_object_slot(self, offset);
+      if(ops_.state()->config().jit_inline_debug) {
+        ops_.state()->log() << " (slot: " << it->second << ")";
+      }
     } else {
-      Signature sig2(ops_.state(), "Object");
-      sig2 << "VM";
-      sig2 << "Object";
-      sig2 << "Object";
+      LookupTable* pii = klass->packed_ivar_info();
+      if(!pii->nil_p()) {
+        bool found = false;
 
-      Value* call_args2[] = {
-        ops_.vm(),
-        self,
-        ops_.constant(acc->name())
-      };
+        Fixnum* which = try_as<Fixnum>(pii->fetch(0, acc->name(), &found));
+        if(found) {
+          int index = which->to_native();
+          int offset = sizeof(Object) + (sizeof(Object*) * index);
+          Value* slot_val = ops_.get_object_slot(self, offset);
 
-      ivar = sig2.call("rbx_get_ivar", call_args2, 3, "ivar",
-          ops_.b());
+          Value* cmp = ops_.b().CreateICmpEQ(slot_val, ops_.constant(Qundef), "prune_undef");
+
+          ivar = ops_.b().CreateSelect(cmp,
+                                       ops_.constant(Qnil), slot_val,
+                                       "select ivar");
+
+          if(ops_.state()->config().jit_inline_debug) {
+            ops_.state()->log() << " (packed index: " << index << ")";
+          }
+        }
+      }
+
+      if(!ivar) {
+        Signature sig2(ops_.state(), "Object");
+        sig2 << "VM";
+        sig2 << "Object";
+        sig2 << "Object";
+
+        Value* call_args2[] = {
+          ops_.vm(),
+          self,
+          ops_.constant(acc->name())
+        };
+
+        ivar = sig2.call("rbx_get_ivar", call_args2, 3, "ivar",
+            ops_.b());
+      }
     }
 
     exception_safe();
     set_result(ivar);
+
+    if(ops_.state()->config().jit_inline_debug) {
+      ops_.state()->log() << "\n";
+    }
+
   }
 
   void Inliner::inline_generic_method(Class* klass, Module* defined_in,
                                       CompiledMethod* cm, VMMethod* vmm) {
+    context_.enter_inline();
     Value* self = recv();
     ops_.check_class(self, klass, failure());
 
@@ -429,9 +471,13 @@ remember:
     // Make the value available to the code that called inliner to
     // check and use.
     set_result(info.return_phi());
+
+    context_.leave_inline();
   }
 
   void Inliner::emit_inline_block(JITInlineBlock* ib, Value* self) {
+    context_.enter_inline();
+
     JITMethodInfo info(context_, ib->method(), ib->code());
     info.set_parent_info(ops_.info());
 
@@ -450,9 +496,11 @@ remember:
     jit::InlineBlockBuilder work(ops_.state(), info, rd);
     work.valid_flag = ops_.valid_flag();
 
-    std::vector<Value*> args;
-    for(int i = count_ - 1; i >= 0; i--) {
-      args.push_back(ops_.stack_back(i));
+    JITStackArgs args(count_);
+    if(from_unboxed_array_) args.set_from_unboxed_array();
+
+    for(int i = count_ - 1, j = 0; i >= 0; i--, j++) {
+      args.put(j, ops_.stack_back(i));
     }
 
     info.stack_args = &args;
@@ -473,6 +521,8 @@ remember:
     // Make the value available to the code that called inliner to
     // check and use.
     set_result(info.return_phi());
+
+    context_.leave_inline();
   }
 
   const Type* find_type(JITOperations& ops_, size_t type) {

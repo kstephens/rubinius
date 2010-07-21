@@ -53,6 +53,7 @@ class Class
   protected :instance_type
 
   def initialize(sclass=Object, name=nil, under=nil)
+    raise TypeError, "already initialized class" if @instance_type
     if !sclass.kind_of?(Class) and !sclass.nil?
       raise TypeError, "superclass must be a Class (#{sclass.class} given)"
     end
@@ -69,6 +70,13 @@ class Class
     if sclass
       sclass.__send__ :inherited, self
     end
+  end
+
+  ##
+  # Specialized initialize_copy because Class needs additional protection
+  def initialize_copy(other)
+    raise TypeError, "already initialized class" unless @method_table == other.method_table
+    super
   end
 
   ##
@@ -98,19 +106,4 @@ class Class
 
   alias_method :inspect, :to_s
 
-  def add_ivars(cm)
-    new_ivars = cm.literals.select { |l| l.kind_of?(Symbol) and l.is_ivar? }
-    return if new_ivars.empty?
-
-    if @seen_ivars
-      new_ivars.each do |x|
-        unless @seen_ivars.include?(x)
-          @seen_ivars << x
-        end
-      end
-    else
-      @seen_ivars = new_ivars
-    end
-
-  end
 end

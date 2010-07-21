@@ -27,6 +27,7 @@
 #include "dispatch.hpp"
 #include "instructions.hpp"
 #include "instruments/profiler.hpp"
+#include "configuration.hpp"
 
 #include "helpers.hpp"
 #include "inline_cache.hpp"
@@ -54,6 +55,7 @@ using namespace rubinius;
 
 #define stack_position(where) (STACK_PTR = call_frame->stk + where)
 #define stack_calculate_sp() (STACK_PTR - call_frame->stk)
+#define stack_back_position(count) (STACK_PTR - (count - 1))
 
 #define stack_local(which) call_frame->stk[vmm->stack_size - which - 1]
 
@@ -61,11 +63,11 @@ using namespace rubinius;
 
 #define both_fixnum_p(_p1, _p2) ((uintptr_t)(_p1) & (uintptr_t)(_p2) & TAG_FIXNUM)
 
-extern "C" {
-  Object* send_slowly(STATE, VMMethod* vmm, InterpreterCallFrame* const call_frame,
-                      Symbol* name, Object** stk_pos, size_t args);
+#define HANDLE_EXCEPTION(val) if(val == NULL) { goto exception; } \
+   else if(vmm->debugging) { \
+     return VMMethod::debugger_interpreter_continue(state, vmm, call_frame,\
+         stack_calculate_sp(), is, current_unwind, unwinds); }
 
-#define HANDLE_EXCEPTION(val) if(val == NULL) goto exception
 #define RUN_EXCEPTION() goto exception
 
 #define SET_CALL_FLAGS(val) is.call_flags = (val)
@@ -73,20 +75,6 @@ extern "C" {
 
 #define SET_ALLOW_PRIVATE(val) is.allow_private = (val)
 #define ALLOW_PRIVATE() is.allow_private
-
-#define stack_back_position(count) (STACK_PTR - (count - 1))
-
-  Object* send_slowly(STATE, VMMethod* vmm, InterpreterCallFrame* const call_frame,
-                      Symbol* name, Object** stk_pos, size_t count)
-  {
-    Object* recv = stk_pos[0];
-    Arguments args(recv, count, stk_pos+1);
-    Dispatch dis(name);
-
-    return dis.send(state, call_frame, args);
-  }
-}
-
 
 Object* VMMethod::interpreter(STATE,
                               VMMethod* const vmm,
@@ -242,8 +230,28 @@ Object* VMMethod::uncommon_interpreter(STATE,
                                        VMMethod* const vmm,
                                        CallFrame* const call_frame,
                                        int32_t entry_ip,
-                                       native_int sp)
+                                       native_int sp,
+                                       CallFrame* const method_call_frame,
+                                       int32_t unwind_count,
+                                       int32_t* input_unwinds)
 {
+
+  VMMethod* method_vmm = method_call_frame->cm->backend_method();
+
+  // 500 is a number picked after doing some tuning on a specific benchmark.
+  // Not sure if it's the right value, but it seems to work fine.
+  if(++method_vmm->uncommon_count > 500) {
+    if(state->shared.config.jit_show_uncommon) {
+      std::cerr << "[[[ Deoptimizing uncommon method ]]]\n";
+      call_frame->print_backtrace(state);
+
+      std::cerr << "Method Call Frame:\n";
+      method_call_frame->print_backtrace(state);
+    }
+
+    method_vmm->uncommon_count = 0;
+    method_vmm->deoptimize(state, method_call_frame->cm);
+  }
 
 #include "vm/gen/instruction_locations.hpp"
 
@@ -252,8 +260,15 @@ Object* VMMethod::uncommon_interpreter(STATE,
 
   Object** stack_ptr = call_frame->stk + sp;
 
-  int current_unwind = 0;
+  int current_unwind = unwind_count;
   UnwindInfo unwinds[kMaxUnwindInfos];
+
+  for(int i = 0, j = 0; j < unwind_count; i += 3, j++) {
+    UnwindInfo& uw = unwinds[j];
+    uw.target_ip = input_unwinds[i];
+    uw.stack_depth = input_unwinds[i + 1];
+    uw.type = (UnwindType)input_unwinds[i + 2];
+  }
 
   if(!state->check_stack(call_frame, &state)) return NULL;
 
@@ -380,6 +395,8 @@ exception:
   return NULL;
 }
 
+#undef HANDLE_EXCEPTION
+#define HANDLE_EXCEPTION(val) if(val == NULL) goto exception
 
 /* The debugger interpreter loop is used to run a method when a breakpoint
  * has been set. It has additional overhead, since it needs to inspect
@@ -496,6 +513,150 @@ exception:
       UnwindInfo* info = &unwinds[--current_unwind];
       stack_position(info->stack_depth);
 
+      if(info->for_ensure()) {
+        stack_position(info->stack_depth);
+        call_frame->set_ip(info->target_ip);
+        cache_ip(info->target_ip);
+
+        // Don't reset ep here, we're still handling the return/break.
+        goto continue_to_run;
+      }
+    }
+
+    // Ok, no ensures to run.
+    if(th->raise_reason() == cReturn) {
+      call_frame->scope->flush_to_heap(state);
+
+      // If we're trying to return to here, we're done!
+      if(th->destination_scope() == call_frame->scope->on_heap()) {
+        Object* val = th->raise_value();
+        th->clear_return();
+        return val;
+      } else {
+        // Give control of this exception to the caller.
+        return NULL;
+      }
+
+    } else { // It's cBreak thats not for us!
+      call_frame->scope->flush_to_heap(state);
+      // Give control of this exception to the caller.
+      return NULL;
+    }
+
+  case cExit:
+    call_frame->scope->flush_to_heap(state);
+    return NULL;
+  default:
+    break;
+  } // switch
+
+  std::cout << "bug!\n";
+  call_frame->print_backtrace(state);
+  abort();
+  return NULL;
+}
+
+Object* VMMethod::debugger_interpreter_continue(STATE,
+                                       VMMethod* const vmm,
+                                       CallFrame* const call_frame,
+                                       int sp,
+                                       InterpreterState& is,
+                                       int current_unwind,
+                                       UnwindInfo* unwinds)
+{
+
+#include "vm/gen/instruction_locations.hpp"
+
+  opcode* stream = vmm->opcodes;
+
+  Object** stack_ptr = call_frame->stk + sp;
+
+  if(!state->check_stack(call_frame, &state)) return NULL;
+
+  if(unlikely(state->interrupts.check)) {
+    state->interrupts.checked();
+    if(state->interrupts.perform_gc) {
+      state->interrupts.perform_gc = false;
+      state->collect_maybe(call_frame);
+    }
+  }
+
+  if(unlikely(state->check_local_interrupts)) {
+    if(!state->process_async(call_frame)) return NULL;
+  }
+
+continue_to_run:
+  try {
+
+#undef DISPATCH
+#define DISPATCH \
+    if(Object* bp = call_frame->find_breakpoint(state)) { \
+      if(!Helpers::yield_debugger(state, call_frame, bp)) goto exception; \
+    } \
+    goto *insn_locations[stream[call_frame->inc_ip()]];
+
+#undef next_int
+#undef cache_ip
+#undef flush_ip
+
+#define next_int ((opcode)(stream[call_frame->inc_ip()]))
+#define cache_ip(which)
+#define flush_ip()
+
+#include "vm/gen/instruction_implementations.hpp"
+
+  } catch(TypeError& e) {
+    flush_ip();
+    Exception* exc =
+      Exception::make_type_error(state, e.type, e.object, e.reason);
+    exc->locations(state, Location::from_call_stack(state, call_frame));
+
+    state->thread_state()->raise_exception(exc);
+    call_frame->scope->flush_to_heap(state);
+    return NULL;
+  } catch(const RubyException& exc) {
+    exc.exception->locations(state,
+          Location::from_call_stack(state, call_frame));
+    state->thread_state()->raise_exception(exc.exception);
+    return NULL;
+  }
+
+  // No reason to be here!
+  abort();
+
+exception:
+  ThreadState* th = state->thread_state();
+  //
+  switch(th->raise_reason()) {
+  case cException:
+    if(current_unwind > 0) {
+      UnwindInfo* info = &unwinds[--current_unwind];
+      stack_position(info->stack_depth);
+      call_frame->set_ip(info->target_ip);
+      cache_ip(info->target_ip);
+      goto continue_to_run;
+    } else {
+      call_frame->scope->flush_to_heap(state);
+      return NULL;
+    }
+
+  case cBreak:
+    // If we're trying to break to here, we're done!
+    if(th->destination_scope() == call_frame->scope->on_heap()) {
+      stack_push(th->raise_value());
+      th->clear_break();
+      goto continue_to_run;
+      // Don't return here, because we want to loop back to the top
+      // and keep running this method.
+    }
+
+    // Otherwise, fall through and run the unwinds
+  case cReturn:
+  case cCatchThrow:
+    // Otherwise, we're doing a long return/break unwind through
+    // here. We need to run ensure blocks.
+    while(current_unwind > 0) {
+      UnwindInfo* info = &unwinds[--current_unwind];
       if(info->for_ensure()) {
         stack_position(info->stack_depth);
         call_frame->set_ip(info->target_ip);

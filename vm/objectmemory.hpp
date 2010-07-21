@@ -45,6 +45,10 @@ namespace rubinius {
   class ImmixGC;
   class InflatedHeaders;
 
+  namespace gc {
+    class Slab;
+  }
+
   typedef std::vector<Object*> ObjectArray;
 
   struct YoungCollectStats {
@@ -77,6 +81,8 @@ namespace rubinius {
     bool allow_gc_;
 
     std::list<gc::WriteBarrier*> aux_barriers_;
+    size_t slab_size_;
+    bool running_finalizers_;
 
   public:
     bool collect_young_now;
@@ -141,6 +147,10 @@ namespace rubinius {
       return aux_barriers_;
     }
 
+    bool running_finalizers() {
+      return running_finalizers_;
+    }
+
   public:
     ObjectMemory(STATE, Configuration& config);
     ~ObjectMemory();
@@ -184,6 +194,9 @@ namespace rubinius {
     void collect_young(GCData& data, YoungCollectStats* stats = 0);
     void collect_mature(GCData& data);
     Object* promote_object(Object* obj);
+
+    bool refill_slab(gc::Slab& slab);
+
     bool valid_object_p(Object* obj);
     void debug_marksweep(bool val);
     void add_type_info(TypeInfo* ti);
@@ -199,11 +212,16 @@ namespace rubinius {
 
     int mature_bytes_allocated();
 
-    void needs_finalization(Object* obj, FinalizerFunction func = 0);
-    void run_finalizers(STATE);
+    void needs_finalization(Object* obj, FinalizerFunction func);
+    void set_ruby_finalizer(Object* obj, Object* fin);
+    void run_finalizers(STATE, CallFrame* call_frame);
+    void run_all_finalizers(STATE);
 
     void find_referers(Object* obj, ObjectArray& result);
     void print_references(Object* obj);
+
+    void* young_start();
+    void* yound_end();
 
     void snapshot();
     void print_new_since_snapshot();

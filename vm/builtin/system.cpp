@@ -352,6 +352,18 @@ namespace rubinius {
     return Location::from_call_stack(state, call_frame, include_vars);
   }
 
+  Array* System::vm_mri_backtrace(STATE, Fixnum* skip,
+                              CallFrame* calling_environment) {
+    CallFrame* call_frame = calling_environment;
+
+    for(native_int i = skip->to_native(); call_frame && i > 0; --i) {
+      call_frame = static_cast<CallFrame*>(call_frame->previous);
+    }
+
+    return Location::mri_backtrace(state, call_frame);
+  }
+
+
   Object* System::vm_show_backtrace(STATE, CallFrame* calling_environment) {
     calling_environment->print_backtrace(state);
     return Qnil;
@@ -449,22 +461,6 @@ namespace rubinius {
     return vm_open_class_under(state, name, sup, under);
   }
 
-  // HACK: Internal helper for tracking subclasses for
-  // ObjectSpace.each_object(Class)
-  static void add_subclass(STATE, Object* super, Class* sub) {
-    Symbol* subclasses = state->symbol("@subclasses");
-    Object* ivar = super->get_ivar(state, subclasses);
-
-    Array* ary = try_as<Array>(ivar);
-    if(!ary) {
-      ary = Array::create(state, 1);
-      ary->set(state, 0, sub);
-      super->set_ivar(state, subclasses, ary);
-    } else {
-      ary->append(state, sub);
-    }
-  }
-
   Class* System::vm_open_class_under(STATE, Symbol* name, Object* super, Module* under) {
     bool found = false;
 
@@ -501,9 +497,6 @@ namespace rubinius {
     }
 
     under->set_const(state, name, cls);
-
-    // HACK for ObjectSpace.each_object(Class)
-    add_subclass(state, super, cls);
 
     return cls;
   }
@@ -564,20 +557,26 @@ namespace rubinius {
       }
     }
 
-    if(Class* cls = try_as<Class>(mod)) {
-      if(!kind_of<MetaClass>(cls) && cls->type_info()->type == Object::type) {
-        Array* ary = cls->seen_ivars();
-        if(ary->nil_p()) {
-          ary = Array::create(state, 5);
-          cls->seen_ivars(state, ary);
-        }
+    bool add_ivars = false;
 
-        Tuple* lits = method->literals();
-        for(size_t i = 0; i < lits->num_fields(); i++) {
-          if(Symbol* sym = try_as<Symbol>(lits->at(state, i))) {
-            if(RTEST(sym->is_ivar_p(state))) {
-              if(!ary->includes_p(state, sym)) ary->append(state, sym);
-            }
+    if(Class* cls = try_as<Class>(mod)) {
+      add_ivars = !kind_of<MetaClass>(cls) && cls->type_info()->type == Object::type;
+    } else {
+      add_ivars = true;
+    }
+
+    if(add_ivars) {
+      Array* ary = mod->seen_ivars();
+      if(ary->nil_p()) {
+        ary = Array::create(state, 5);
+        mod->seen_ivars(state, ary);
+      }
+
+      Tuple* lits = method->literals();
+      for(size_t i = 0; i < lits->num_fields(); i++) {
+        if(Symbol* sym = try_as<Symbol>(lits->at(state, i))) {
+          if(RTEST(sym->is_ivar_p(state))) {
+            if(!ary->includes_p(state, sym)) ary->append(state, sym);
           }
         }
       }
@@ -894,5 +893,10 @@ namespace rubinius {
 
     // dup the descriptor so the lifetime of socket is properly controlled.
     return IO::create(state, dup(sock));
+  }
+
+  Object* System::vm_set_finalizer(STATE, Object* obj, Object* fin) {
+    state->om->set_ruby_finalizer(obj, fin);
+    return obj;
   }
 }

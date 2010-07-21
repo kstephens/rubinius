@@ -147,14 +147,14 @@ namespace rubinius {
     }
 
     for(capi::Handles::Iterator i(*data.handles()); i.more(); i.advance()) {
-      if(!i->weak_p()) {
+      if(i->in_use_p() && !i->weak_p()) {
         saw_object(i->object());
         via_handles_++;
       }
     }
 
     for(capi::Handles::Iterator i(*data.cached_handles()); i.more(); i.advance()) {
-      if(!i->weak_p()) {
+      if(i->in_use_p() && !i->weak_p()) {
         saw_object(i->object());
         via_handles_++;
       }
@@ -329,41 +329,79 @@ namespace rubinius {
   }
 
   void ImmixGC::check_finalize() {
+    // If finalizers are running right now, just fixup any finalizer references
+    if(object_memory_->running_finalizers()) {
+      for(std::list<FinalizeObject>::iterator i = object_memory_->finalize().begin();
+          i != object_memory_->finalize().end();
+          i++) {
+        if(i->object) {
+          i->object = saw_object(i->object);
+        }
+
+        if(i->ruby_finalizer) {
+          i->ruby_finalizer = saw_object(i->ruby_finalizer);
+        }
+      }
+      return;
+    }
+
     for(std::list<FinalizeObject>::iterator i = object_memory_->finalize().begin();
-        i != object_memory_->finalize().end(); ) {
+        i != object_memory_->finalize().end(); )
+    {
+
       FinalizeObject& fi = *i;
+
+      if(i->ruby_finalizer) {
+        i->ruby_finalizer = saw_object(i->ruby_finalizer);
+      }
+
+      bool remove = false;
 
       switch(i->status) {
       case FinalizeObject::eLive:
-        // We have to still keep it alive though until we finish with it.
-        i->object = saw_object(i->object);
-
         if(!i->object->marked_p(object_memory_->mark())) {
-          i->queued();
-          object_memory_->to_finalize().push_back(&fi);
+          // Run C finalizers now rather that queue them.
+          if(i->finalizer) {
+            (*i->finalizer)(state(), i->object);
+            i->status = FinalizeObject::eFinalized;
+            remove = true;
+          } else {
+            i->queued();
+            object_memory_->to_finalize().push_back(&fi);
+
+            // We have to still keep it alive though until we finish with it.
+            i->object = saw_object(i->object);
+          }
+        } else {
+          // Update the reference
+          i->object = saw_object(i->object);
         }
+
         break;
       case FinalizeObject::eQueued:
         // Nothing, we haven't gotten to it yet.
         // Keep waiting and keep i->object updated.
         i->object = saw_object(i->object);
+        i->queue_count++;
         break;
       case FinalizeObject::eFinalized:
         if(!i->object->marked_p(object_memory_->mark())) {
           // finalized and done with.
-          i = object_memory_->finalize().erase(i);
-          continue;
+          remove = true;
         } else {
-          // RESURECTION!
+          // RESURRECTION!
           i->queued();
           i->object = saw_object(i->object);
         }
         break;
       }
 
-      i++;
+      if(remove) {
+        i = object_memory_->finalize().erase(i);
+      } else {
+        i++;
+      }
     }
-
   }
 
 }

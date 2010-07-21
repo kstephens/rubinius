@@ -23,6 +23,7 @@ namespace rubinius {
   class ExceptionPoint;
   class Message;
   class NativeMethodFrame;
+  class Pointer;
 
   /** Tracks RARRAY and RSTRING structs */
   typedef std::tr1::unordered_map<capi::Handle*, void*> CApiStructs;
@@ -140,7 +141,8 @@ namespace rubinius {
    *  Call frame for a native method. @see NativeMethodEnvironment.
    */
   class NativeMethodFrame {
-    /** Native Frame active before this call. @note This may NOT be the sender. --rue */
+    /** the last NativeMethodFrame used up the stack.
+     *  @note This is rarely the direct caller. */
     NativeMethodFrame* previous_;
     /** HandleSet to Objects used in this Frame. */
     capi::HandleSet handles_;
@@ -238,25 +240,14 @@ namespace rubinius {
   /* The various function signatures needed since C++ requires strict typing here. */
 
   /** Generic function pointer used to store any type of functor. */
-  typedef void (*GenericFunctor)(void);
+
+  typedef VALUE (*VariableFunction)(VALUE, ...);
 
   /* Actual functor types. */
 
-  typedef void (*InitFunctor)      (void);   /**< The Init_<name> function. */
+  typedef void (*InitFunction)      (void);   /**< The Init_<name> function. */
 
-  typedef VALUE (*ArgcFunctor)     (int, VALUE*, VALUE);
-  typedef VALUE (*OneArgFunctor)   (VALUE);
-  typedef VALUE (*TwoArgFunctor)   (VALUE, VALUE);
-  typedef VALUE (*ThreeArgFunctor) (VALUE, VALUE, VALUE);
-  typedef VALUE (*FourArgFunctor)  (VALUE, VALUE, VALUE, VALUE);
-  typedef VALUE (*FiveArgFunctor)  (VALUE, VALUE, VALUE, VALUE, VALUE);
-  typedef VALUE (*SixArgFunctor)   (VALUE, VALUE, VALUE, VALUE, VALUE, VALUE);
-  typedef VALUE (*SevenArgFunctor) (VALUE, VALUE, VALUE, VALUE, VALUE, VALUE, VALUE);
-  typedef VALUE (*EightArgFunctor) (VALUE, VALUE, VALUE, VALUE, VALUE, VALUE, VALUE, VALUE);
-  typedef VALUE (*NineArgFunctor)  (VALUE, VALUE, VALUE, VALUE, VALUE, VALUE, VALUE, VALUE,
-                                    VALUE);
-  typedef VALUE (*TenArgFunctor)   (VALUE, VALUE, VALUE, VALUE, VALUE, VALUE, VALUE, VALUE,
-                                    VALUE, VALUE);
+  typedef VALUE (*ArgcFunction)     (int, VALUE*, VALUE);
 
 
   /**
@@ -272,8 +263,6 @@ namespace rubinius {
    *  VALUE is an opaque type from which a handle to the actual object
    *  can be extracted. User code never operates on the VALUE itself.
    *
-   *  @todo   Add tests specifically for NativeMethod.
-   *          Currently only in Subtend tests.
    */
   class NativeMethod : public Executable {
     /** Arity of the method. @see Arity. */
@@ -286,7 +275,7 @@ namespace rubinius {
     Module* module_;                                  // slot
 
     /** Function object that implements this method. */
-    void* functor_;
+    void* func_;
 
   public:   /* Accessors */
 
@@ -320,57 +309,23 @@ namespace rubinius {
     /**
      *  Create a NativeMethod object.
      *
-     *  May take one of several types of functors but the calling
-     *  code is responsible for figuring out which type to cast
-     *  the functor back to for use, that information is not
-     *  stored here.
-     *
-     *  @see  functor_as() for the cast back.
+     *  Takes a function to call in the form of a void*. +arity+ is used
+     *  to figure out how to call the function properly.
      */
-    template <typename FunctorType>
-      static NativeMethod* create(VM* state,
-                                  String* file_name = as<String>(Qnil),
-                                  Module* module = as<Module>(Qnil),
-                                  Symbol* method_name = as<Symbol>(Qnil),
-                                  FunctorType functor = static_cast<GenericFunctor>(NULL),
-                                  Fixnum* arity = as<Fixnum>(Qnil))
-      {
-        NativeMethod* nmethod = state->new_object<NativeMethod>(G(nmethod));
-
-        nmethod->arity(state, arity);
-        nmethod->file(state, file_name);
-        nmethod->name(state, method_name);
-        nmethod->module(state, module);
-
-        nmethod->functor_ = reinterpret_cast<void*>(functor);
-
-        nmethod->set_executor(&NativeMethod::executor_implementation);
-
-        nmethod->primitive(state, state->symbol("nativemethod_call"));
-        nmethod->serial(state, Fixnum::from(0));
-
-        return nmethod;
-      }
-
-    /** Allocate a functional but empty NativeMethod. */
-    static NativeMethod* allocate(VM* state);
-
+    static NativeMethod* create(VM* state, String* file_name,
+                                Module* module, Symbol* method_name,
+                                void* func, Fixnum* arity);
 
   public:   /* Class Interface */
 
     /** Set up and call native method. */
+    template <class ArgumentHandler>
     static Object* executor_implementation(STATE, CallFrame* call_frame, Dispatch& msg,
                                            Arguments& message);
 
     /**
-     *  Attempt to load a C extension library and its main function.
-     *
-     *  The path should be the full path (relative or absolute) to the
-     *  library, without the file extension. The name should be the
-     *  entry point name, i.e. "Init_<extension>", where extension is
-     *  the basename of the library. The function signature is:
-     *
-     *    void Init_<name>();
+     * Create a NativeMethod to invoke the function pointed to by +ptr+
+     * as a libraries Init function.
      *
      *  A NativeMethod for the function is returned, and can be executed
      *  to actually perform the loading.
@@ -380,20 +335,19 @@ namespace rubinius {
      *  entered.
      */
     // Ruby.primitive :nativemethod_load_extension_entry_point
-    static NativeMethod* load_extension_entry_point(STATE, String* path, String* name);
+    static NativeMethod* load_extension_entry_point(STATE, Pointer* ptr);
 
 
   public:   /* Instance methods */
 
-    /** Call the C function. */
-    Object* call(STATE, NativeMethodEnvironment* env, Arguments& msg);
-
+    VariableFunction func() {
+      return reinterpret_cast<VariableFunction>(func_);
+    }
 
     /** Return the functor cast into the specified type. */
-    template <typename FunctorType>
-      FunctorType functor_as() const
-      {
-        return reinterpret_cast<FunctorType>(functor_);
+    template <typename FunctionType>
+      FunctionType func_as() const {
+        return reinterpret_cast<FunctionType>(func_);
       }
 
   public:   /* Type information */

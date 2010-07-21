@@ -100,11 +100,10 @@ namespace rubinius {
 
   public:   /* GC support, bookkeeping &c. */
 
-    /** Calls cleanup() on the TypeInfo for this object's type. */
-    void        cleanup(STATE);
-
     /** Provides access to the GC write barrier from any object. */
     void        write_barrier(STATE, void* obj);
+    void        inline_write_barrier_passed(STATE, void* obj);
+
     /** Special-case write_barrier() for Fixnums. */
     void        write_barrier(STATE, Fixnum* obj);
     /** Special-case write_barrier() for Symbols. */
@@ -360,8 +359,8 @@ namespace rubinius {
     class Info : public TypeInfo {
     public:
       virtual ~Info() {}
-      Info(object_type type, bool cleanup = false)
-        : TypeInfo(type, cleanup)
+      Info(object_type type)
+        : TypeInfo(type)
       {}
 
       virtual void auto_mark(Object* obj, ObjectMark& mark) {}
@@ -394,6 +393,15 @@ namespace rubinius {
 
   inline void Object::write_barrier(STATE, Symbol* obj) {
     /* No-op */
+  }
+
+  inline void Object::write_barrier(STATE, void* ptr) {
+    Object* obj = reinterpret_cast<Object*>(ptr);
+    if(!REFERENCE_P(obj) ||
+        state->young_object_p(this) ||
+        !state->young_object_p(obj)) return;
+
+    inline_write_barrier_passed(state, ptr);
   }
 
   // Used in filtering APIs

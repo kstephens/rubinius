@@ -1,21 +1,3 @@
-require 'kernel/common/ar'
-require 'kernel/delta/ar'
-
-def ar_add(ar_name, file_name)
-  puts "ar_add #{ar_name} #{file_name}" if $verbose
-
-  ar = Ar.new ar_name
-
-  open file_name, 'rb' do |io|
-    stat  = io.stat
-    mtime = stat.mtime
-    uid   = stat.uid
-    gid   = stat.gid
-    mode  = stat.mode
-
-    ar.replace file_name, mtime, uid, gid, mode, io.read
-  end
-end
 
 def clear_compiler
   ENV.delete 'RBX_BOOTSTRAP'
@@ -148,26 +130,8 @@ class CodeGroup
 
     compile_task
     load_order_task
-    rba_task
 
     @output
-  end
-
-  def rba_task
-    file File.join('runtime', 'stable', @rba_name) => @output do
-      files = @output.map do |path|
-        path.sub File.join(@build_dir, ''), ''
-      end
-
-      Dir.chdir @build_dir do
-        ar_name = File.join '..', 'stable', @rba_name
-        rm_f ar_name, :verbose => $verbose
-
-        File.readlines('load_order.txt').each do |file|
-          ar_add ar_name, file.strip
-        end
-      end
-    end
   end
 
 end

@@ -17,6 +17,16 @@ describe "C-API Kernel function" do
     end
   end
 
+  describe "rb_need_block" do
+    it "raises a LocalJumpError if no block is given" do
+      lambda { @s.rb_need_block }.should raise_error(LocalJumpError)
+    end
+
+    it "does not raise a LocalJumpError if a block is given" do
+      @s.rb_need_block { }.should == nil
+    end
+  end
+
   describe "rb_raise" do
     it "raises an exception" do
       lambda { @s.rb_raise({}) }.should raise_error(TypeError)
@@ -26,6 +36,31 @@ describe "C-API Kernel function" do
       h = {}
       lambda { @s.rb_raise(h) }.should raise_error(TypeError)
       h[:stage].should == :before
+    end
+  end
+
+  describe "rb_throw" do
+    before :each do
+      ScratchPad.record []
+    end
+
+    it "sets the return value of the catch block to the specified value" do
+      catch(:foo) do
+        @s.rb_throw(:return_value)
+      end.should == :return_value
+    end
+
+    it "terminates the function at the point it was called" do
+      catch(:foo) do
+        ScratchPad << :before_throw
+        @s.rb_throw(:thrown_value)
+        ScratchPad << :after_throw
+      end.should == :thrown_value
+      ScratchPad.recorded.should == [:before_throw]
+    end
+
+    it "raises a NameError if there is no catch block for the symbol" do
+      lambda { @s.rb_throw(nil) }.should raise_error(NameError)
     end
   end
 
@@ -79,25 +114,59 @@ describe "C-API Kernel function" do
     end
   end
 
+  describe "rb_yield_values" do
+    it "yields passed arguments" do
+      ret = nil
+      @s.rb_yield_values(1, 2) { |x, y| ret = x + y }
+      ret.should == 3
+    end
+
+    it "returns the result from block evaluation" do
+      @s.rb_yield_values(1, 2) { |x, y| x + y }.should == 3
+    end
+
+    it "raises LocalJumpError when no block is given" do
+      lambda { @s.rb_yield_values(1, 2) }.should raise_error(LocalJumpError)
+    end
+  end
+
   describe "rb_rescue" do
     before :each do
       @proc = lambda { |x| x }
+      @raise_proc_returns_sentinel = lambda {|arg| :raise_proc_executed }
+      @raise_proc_returns_arg = lambda {|arg| arg }
       @arg_error_proc = lambda { raise ArgumentError, '' }
       @std_error_proc = lambda { raise StandardError, '' }
       @exc_error_proc = lambda { raise Exception, '' }
     end
 
     it "executes passed function" do
-      @s.rb_rescue(@proc, :no_exc, @proc, :exc).should == :no_exc
+      @s.rb_rescue(@proc, :no_exc, @raise_proc_returns_arg, :exc).should == :no_exc
     end
 
-    it "executes passed 'raise function' if a StardardError exception is raised" do
-      @s.rb_rescue(@arg_error_proc, nil, @proc, :exc).should == :exc
-      @s.rb_rescue(@std_error_proc, nil, @proc, :exc).should == :exc
+    it "executes passed 'raise function' if a StandardError exception is raised" do
+      @s.rb_rescue(@arg_error_proc, nil, @raise_proc_returns_sentinel, :exc).should == :raise_proc_executed
+      @s.rb_rescue(@std_error_proc, nil, @raise_proc_returns_sentinel, :exc).should == :raise_proc_executed
     end
 
-    it "raises an exception if passed function raises an exception other than StardardError" do
-      lambda { @s.rb_rescue(@exc_error_proc, nil, @proc, nil) }.should raise_error(Exception)
+    it "passes the user supplied argument to the 'raise function' if a StandardError exception is raised" do
+      arg1, _ = @s.rb_rescue(@arg_error_proc, nil, @raise_proc_returns_arg, :exc1)
+      arg1.should == :exc1
+
+      arg2, _ = @s.rb_rescue(@std_error_proc, nil, @raise_proc_returns_arg, :exc2)
+      arg2.should == :exc2
+    end
+
+    it "passes the raised exception to the 'raise function' if a StandardError exception is raised" do
+      _, exc1 = @s.rb_rescue(@arg_error_proc, nil, @raise_proc_returns_arg, :exc)
+      exc1.class.should == ArgumentError
+
+      _, exc2 = @s.rb_rescue(@std_error_proc, nil, @raise_proc_returns_arg, :exc)
+      exc2.class.should == StandardError
+    end
+
+    it "raises an exception if passed function raises an exception other than StandardError" do
+      lambda { @s.rb_rescue(@exc_error_proc, nil, @raise_proc_returns_arg, nil) }.should raise_error(Exception)
     end
 
     it "raises an exception if any exception is raised inside 'raise function'" do

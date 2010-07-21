@@ -32,8 +32,6 @@
 
 #include "instruments/profiler.hpp"
 
-#include "native_libraries.hpp"
-
 namespace rubinius {
 
   void NativeFunction::init(STATE) {
@@ -66,6 +64,7 @@ namespace rubinius {
 
   FFIData::~FFIData() {
     free(arg_types);
+    XFREE(cif.arg_types);
     if(closure) ffi_closure_free(closure);
   }
 
@@ -279,6 +278,7 @@ namespace rubinius {
       sassert(status == FFI_OK);
     }
 
+    state->shared.om->add_code_resource(data);
     this->ffi_data = data;
   }
 

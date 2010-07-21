@@ -448,5 +448,8 @@ namespace rubinius {
 
     start_signals();
     run_file(root + "/loader.rbc");
+
+    // TODO: temporarily disable to sort out finalizing Pointer objects
+    // shared->om->run_all_finalizers(state);
   }
 }

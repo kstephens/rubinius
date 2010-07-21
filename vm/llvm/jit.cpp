@@ -318,11 +318,18 @@ namespace rubinius {
           if(ls_->config().jit_show_compiling) {
             llvm::outs() << "[[[ JIT error in background compiling ]]]\n";
           }
+          // If someone was waiting on this, wake them up.
+          if(thread::Condition* cond = req->waiter()) {
+            cond->signal();
+          }
 
           delete req;
 
+          // We don't depend on the GC here, so let it run independent
+          // of us.
           ls_->shared().gc_independent();
-          continue; // for(;;)
+
+          continue;
         }
 
         if(show_machine_code_) {
@@ -564,7 +571,7 @@ namespace rubinius {
     bool wait = config().jit_sync;
 
     // Ignore it!
-    if(cm->backend_method()->call_count < 0) {
+    if(cm->backend_method()->call_count <= 1) {
       if(config().jit_inline_debug) {
         log() << "JIT: ignoring candidate! "
           << symbol_cstr(cm->name()) << "\n";
@@ -573,8 +580,13 @@ namespace rubinius {
     }
 
     if(config().jit_inline_debug) {
-      log() << "JIT: queueing method: "
-        << symbol_cstr(cm->name()) << "\n";
+      if(block) {
+        log() << "JIT: queueing block inside: "
+          << symbol_cstr(cm->name()) << "\n";
+      } else {
+        log() << "JIT: queueing method: "
+          << symbol_cstr(cm->name()) << "\n";
+      }
     }
 
     cm->backend_method()->call_count = -1;
@@ -604,8 +616,13 @@ namespace rubinius {
       mux.unlock();
 
       if(config().jit_inline_debug) {
-        log() << "JIT: compiled method: "
-              << symbol_cstr(cm->name()) << "\n";
+        if(block) {
+          log() << "JIT: compiled block inside: "
+                << symbol_cstr(cm->name()) << "\n";
+        } else {
+          log() << "JIT: compiled method: "
+                << symbol_cstr(cm->name()) << "\n";
+        }
       }
     } else {
       background_thread_->add(req);
@@ -621,8 +638,6 @@ namespace rubinius {
 
   void LLVMState::remove(llvm::Function* func) {
     shared_.stats.jitted_methods--;
-
-    engine_->getPointerToFunction(func);
 
     // Deallocate the JITed code
     engine_->freeMachineCodeForFunction(func);
@@ -661,15 +676,6 @@ namespace rubinius {
   }
   */
 
-  static CompiledMethod* find_first_non_block(CallFrame* cf) {
-    while(cf->cm->backend_method()->parent()) {
-      cf = cf->previous;
-      if(!cf) return 0;
-    }
-
-    return cf->cm;
-  }
-
   /*
   static CallFrame* validate_block_parent(CallFrame* cf, VMMethod* parent) {
     if(cf->previous && cf->previous->previous) {
@@ -692,7 +698,7 @@ namespace rubinius {
       }
     }
 
-    CompiledMethod* candidate = find_candidate(start, call_frame);
+    CallFrame* candidate = find_candidate(start, call_frame);
     if(!candidate) {
       if(config().jit_inline_debug) {
         log() << "JIT: unable to find candidate\n";
@@ -700,22 +706,24 @@ namespace rubinius {
       return;
     }
 
-    assert(!candidate->backend_method()->parent());
-
-    if(candidate->backend_method()->call_count < 0) {
-      if(!start) return;
+    if(candidate->cm->backend_method()->call_count <= 1) {
+      if(!start || start->backend_method()->jitted()) return;
       // Ignore it. compile this one.
-      candidate = start;
+      candidate = call_frame;
     }
 
-    compile_soon(state, candidate);
+    if(candidate->block_p()) {
+      compile_soon(state, candidate->cm, candidate->block_env());
+    } else {
+      compile_soon(state, candidate->cm);
+    }
   }
 
-#define SMALL_METHOD_SIZE 20
+#define SMALL_METHOD_SIZE 50
 
-  CompiledMethod* LLVMState::find_candidate(CompiledMethod* start, CallFrame* call_frame) {
+  CallFrame* LLVMState::find_candidate(CompiledMethod* start, CallFrame* call_frame) {
     if(!config_.jit_inline_generic) {
-      return find_first_non_block(call_frame);
+      return call_frame;
     }
 
     int depth = cInlineMaxDepth;
@@ -727,27 +735,34 @@ namespace rubinius {
     }
 
     if(!call_frame || start->backend_method()->total > SMALL_METHOD_SIZE) {
-      return start;
+      return call_frame;
     }
 
-    CompiledMethod* caller = start;
+    CallFrame* caller = call_frame;
 
     while(depth-- > 0) {
       CompiledMethod* cur = call_frame->cm;
       VMMethod* vmm = cur->backend_method();
 
+      /*
       if(call_frame->block_p()
           || vmm->required_args != vmm->total_args // has a splat
           || vmm->call_count < 200 // not called much
           || vmm->jitted() // already jitted
           || vmm->parent() // is a block
         ) return caller;
+      */
+
+      if(vmm->required_args != vmm->total_args // has a splat
+          || vmm->call_count < 200 // not called much
+          || vmm->jitted() // already jitted
+        ) return caller;
 
       CallFrame* next = call_frame->previous;
 
-      if(!next|| cur->backend_method()->total > SMALL_METHOD_SIZE) return cur;
+      if(!next|| cur->backend_method()->total > SMALL_METHOD_SIZE) return call_frame;
 
-      caller = cur;
+      caller = call_frame;
       call_frame = next;
     }
 

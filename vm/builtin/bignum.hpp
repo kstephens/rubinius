@@ -196,10 +196,12 @@ namespace rubinius {
     Integer* size(STATE);
     hashval hash_bignum(STATE);
 
+    void verify_size(STATE, size_t size);
+
     class Info : public TypeInfo {
     public:
-      Info(object_type type, bool cleanup = false)
-        : TypeInfo(type, false)
+      Info(object_type type)
+        : TypeInfo(type)
       {
         allow_user_allocate = false;
       }

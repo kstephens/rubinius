@@ -57,6 +57,7 @@ namespace rubinius {
     , stack_start_(0)
     , profiler_(0)
     , run_signals_(false)
+
     , shared(shared)
     , waiter_(NULL)
     , interrupt_with_signal_(false)
@@ -70,6 +71,12 @@ namespace rubinius {
     probe.set(Qnil, &globals().roots);
     set_stack_size(cStackDepthMax);
     os_thread_ = pthread_self(); // initial value
+
+    if(shared.om) {
+      young_start_ = shared.om->young_start();
+      young_end_ = shared.om->yound_end();
+      shared.om->refill_slab(local_slab_);
+    }
   }
 
   void VM::discard(VM* vm) {
@@ -87,6 +94,11 @@ namespace rubinius {
 
     om = new ObjectMemory(this, shared.config);
     shared.om = om;
+
+    young_start_ = shared.om->young_start();
+    young_end_ = shared.om->yound_end();
+
+    om->refill_slab(local_slab_);
 
     /** @todo Done by Environment::boot_vm(), and Thread::s_new()
      *        does not boot at all. Should this be removed? --rue */
@@ -176,8 +188,25 @@ namespace rubinius {
     VM::set_current(this);
   }
 
-  Object* VM::new_object_typed(Class* cls, size_t bytes, object_type type) {
-    return om->new_object_typed(cls, bytes, type);
+  Object* VM::new_object_typed(Class* cls, size_t size, object_type type) {
+    Object* obj = reinterpret_cast<Object*>(local_slab().allocate(size));
+
+    if(unlikely(!obj)) {
+      if(shared.om->refill_slab(local_slab())) {
+        obj = reinterpret_cast<Object*>(local_slab().allocate(size));
+      }
+
+      // If refill_slab fails, obj will still be NULL.
+
+      if(!obj) {
+        return om->new_object_typed(cls, size, type);
+      }
+    }
+
+    obj->init_header(cls, YoungObjectZone, type);
+    obj->clear_fields(size);
+
+    return obj;
   }
 
   Object* VM::new_object_typed_mature(Class* cls, size_t bytes, object_type type) {
@@ -185,7 +214,7 @@ namespace rubinius {
   }
 
   Object* VM::new_object_from_type(Class* cls, TypeInfo* ti) {
-    return om->new_object_typed(cls, ti->instance_size, ti->type);
+    return new_object_typed(cls, ti->instance_size, ti->type);
   }
 
   Class* VM::new_basic_class(Class* sup) {
@@ -296,7 +325,7 @@ namespace rubinius {
     om->collect_young(gc_data);
     om->collect_mature(gc_data);
 
-    om->run_finalizers(this);
+    om->run_finalizers(this, call_frame);
   }
 
   void VM::collect_maybe(CallFrame* call_frame) {
@@ -379,12 +408,12 @@ namespace rubinius {
 #ifdef RBX_PROFILER
       if(unlikely(shared.profiling())) {
         profiler::MethodEntry method(this, profiler::kMatureGC);
-        om->run_finalizers(this);
+        om->run_finalizers(this, call_frame);
       } else {
-        om->run_finalizers(this);
+        om->run_finalizers(this, call_frame);
       }
 #else
-      om->run_finalizers(this);
+      om->run_finalizers(this, call_frame);
 #endif
   }
 

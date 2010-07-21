@@ -15,6 +15,7 @@
 #include "call_frame.hpp"
 #include "builtin/variable_scope.hpp"
 #include "builtin/staticscope.hpp"
+#include "builtin/block_environment.hpp"
 #include "capi/handle.hpp"
 
 #include "arguments.hpp"
@@ -86,10 +87,6 @@ namespace rubinius {
   }
 
   void GarbageCollector::delete_object(Object* obj) {
-    if(obj->requires_cleanup_p()) {
-      object_memory_->find_type_info(obj)->cleanup(obj);
-    }
-
     if(obj->remembered_p()) {
       object_memory_->unremember_object(obj);
     }
@@ -157,6 +154,10 @@ namespace rubinius {
       if(Dispatch* msg = call_frame->dispatch()) {
         msg->module = (Module*)mark_object(msg->module);
         msg->method = (Executable*)mark_object(msg->method);
+      }
+
+      if(BlockEnvironment* env = call_frame->block_env()) {
+        call_frame->set_block_env((BlockEnvironment*)mark_object(env));
       }
 
       Arguments* args = call_frame->arguments;
@@ -259,6 +260,10 @@ namespace rubinius {
       if(Dispatch* msg = call_frame->dispatch()) {
         msg->module = (Module*)visit.call(msg->module);
         msg->method = (Executable*)visit.call(msg->method);
+      }
+
+      if(BlockEnvironment* env = call_frame->block_env()) {
+        call_frame->set_block_env((BlockEnvironment*)visit.call(env));
       }
 
       Arguments* args = call_frame->arguments;

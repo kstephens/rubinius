@@ -78,12 +78,15 @@ namespace rubinius {
       }
 
       void invalidate() {
-        assert(references_ <= 0);
         checksum_ = 0;
       }
 
       Object* object() {
         return object_;
+      }
+
+      bool in_use_p() {
+        return object_ != 0;
       }
 
       void set_object(Object* obj) {
@@ -137,6 +140,11 @@ namespace rubinius {
          return type_;
       }
 
+      void forget_object() {
+        free_data();
+        object_ = 0;
+      }
+
       RArray* as_rarray(NativeMethodEnvironment* env);
       RData*  as_rdata(NativeMethodEnvironment* env);
       RString* as_rstring(NativeMethodEnvironment* env);
@@ -148,6 +156,9 @@ namespace rubinius {
 
     class Handles : public LinkedList {
     public:
+
+      ~Handles();
+
       Handle* front() {
         return static_cast<Handle*>(head());
       }

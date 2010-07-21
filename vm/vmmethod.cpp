@@ -84,6 +84,7 @@ namespace rubinius {
     : parent_(NULL)
     , run(standard_interpreter)
     , type(NULL)
+    , uncommon_count(0)
     , number_of_caches_(0)
     , caches(0)
 #ifdef ENABLE_LLVM
@@ -91,6 +92,8 @@ namespace rubinius {
     , jitted_impl_(NULL)
 #endif
     , name_(meth->name())
+    , method_id_(state->shared.inc_method_count())
+    , debugging(false)
   {
     meth->set_executor(&VMMethod::execute);
 
@@ -538,19 +541,6 @@ namespace rubinius {
       CompiledMethod* cm = as<CompiledMethod>(msg.method);
       VMMethod* vmm = cm->backend_method();
 
-#ifdef ENABLE_LLVM
-      // A negative call_count means we've disabled usage based JIT
-      // for this method.
-      if(vmm->call_count >= 0) {
-        if(vmm->call_count >= state->shared.config.jit_call_til_compile) {
-          LLVMState* ls = LLVMState::get(state);
-          ls->compile_callframe(state, cm, previous);
-        } else {
-          vmm->call_count++;
-        }
-      }
-#endif
-
       size_t scope_size = sizeof(StackVariables) +
         (vmm->number_of_locals * sizeof(Object*));
       StackVariables* scope =
@@ -584,6 +574,18 @@ namespace rubinius {
       frame->cm =       cm;
       frame->scope =    scope;
 
+#ifdef ENABLE_LLVM
+      // A negative call_count means we've disabled usage based JIT
+      // for this method.
+      if(vmm->call_count >= 0) {
+        if(vmm->call_count >= state->shared.config.jit_call_til_compile) {
+          LLVMState* ls = LLVMState::get(state);
+          ls->compile_callframe(state, cm, frame);
+        } else {
+          vmm->call_count++;
+        }
+      }
+#endif
 
 #ifdef RBX_PROFILER
       if(unlikely(state->shared.profiling())) {
@@ -614,14 +616,14 @@ namespace rubinius {
     // here. We let the CodeManager do that later, when we're sure
     // the llvm function is no longer used.
     llvm_function_ = 0;
+    jitted_impl_ = 0;
+    jitted_bytes_ = 0;
 
     // Remove any JIT data, which will be cleanup by the CodeManager
     // later.
     original->set_jit_data(0);
 
-    // Don't reset call_count if it's -1
-    // (why would it be -1, it shouldn't be if we got this far)
-    if(call_count >= 0) call_count = 0;
+    call_count = 0;
 #endif
   }
 
