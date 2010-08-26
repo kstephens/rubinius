@@ -59,6 +59,9 @@ namespace rubinius {
     // Ruby.primitive :vm_exec
     static Object*  vm_exec(STATE, String* path, Array* args);
 
+    // Ruby.primitive :vm_spawn
+    static Object*  vm_spawn(STATE, String* str, CallFrame* calling_environment);
+
     // Ruby.primitive :vm_wait_pid
     static Object*  vm_wait_pid(STATE, Fixnum* pid, Object* no_hang, CallFrame* calling_environment);
 
@@ -166,6 +169,9 @@ namespace rubinius {
 
     // Ruby.primitive :vm_time
     static Object*  vm_time(STATE);
+
+    // Ruby.primitive :vm_times
+    static Array*   vm_times(STATE);
 
     // Ruby.primitive :vm_open_class
     static Class* vm_open_class(STATE, Symbol* name, Object* super, StaticScope* scope);

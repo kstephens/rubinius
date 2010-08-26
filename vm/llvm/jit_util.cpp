@@ -316,10 +316,21 @@ extern "C" {
     /* If there is only one argument and that thing is an array...
      AND the thing being invoked is not a lambda... */
     if(!(call_frame->flags & CallFrame::cIsLambda) &&
-         args.total() == 1 &&
-         kind_of<Array>(args.get_argument(0)))
-    {
-      return args.get_argument(0);
+        args.total() == 1) {
+      Object* obj = args.get_argument(0);
+      if(kind_of<Array>(obj)) {
+        return obj;
+      } else if(RTEST(obj->respond_to(state, state->symbol("to_ary"), Qfalse))) {
+        obj = obj->send(state, call_frame, state->symbol("to_ary"));
+        if(kind_of<Array>(obj)) {
+          return obj;
+        } else {
+          Exception::type_error(state, "to_ary must return an Array", call_frame);
+          return 0;
+        }
+      }
+      // One argument and it's not Array or Array-ish at all, so fall through
+      // and let it be wrapped in an array.
     }
 
     Array* ary = Array::create(state, args.total());
@@ -330,22 +341,33 @@ extern "C" {
     return ary;
   }
 
-  Object* rbx_cast_for_multi_block_arg_varargs(STATE, int count, ...) {
+  Object* rbx_cast_for_multi_block_arg_varargs(STATE, CallFrame* call_frame,
+                                               int count, ...)
+  {
     va_list ap;
 
     /* If there is only one argument and that thing is an array... */
     if(count == 1) {
       va_start(ap, count);
 
-      Object* first = va_arg(ap, Object*);
-      if(!kind_of<Array>(first)) {
+      Object* obj = va_arg(ap, Object*);
+
+      if(kind_of<Array>(obj)) {
+        // Nothing! it's good.
+      } else if(RTEST(obj->respond_to(state, state->symbol("to_ary"), Qfalse))) {
+        obj = obj->send(state, call_frame, state->symbol("to_ary"));
+        if(!kind_of<Array>(obj)) {
+          Exception::type_error(state, "to_ary must return an Array", call_frame);
+          obj = 0;
+        }
+      } else {
         Array* ary = Array::create(state, 1);
-        ary->set(state, 0, first);
-        first = ary;
+        ary->set(state, 0, obj);
+        obj = ary;
       }
 
       va_end(ap);
-      return first;
+      return obj;
     }
 
     Array* ary = Array::create(state, count);
@@ -579,20 +601,21 @@ extern "C" {
     Object* res = 0;
 
     Object* val = call_frame->cm->literals()->at(state, association_index);
+    StaticScope* sc = call_frame->static_scope();
 
     // See if the cache is present, if so, validate it and use the value
     GlobalCacheEntry* cache;
     if((cache = try_as<GlobalCacheEntry>(val)) != NULL) {
-      if(cache->valid_p(state)) {
+      if(cache->valid_p(state, sc)) {
         res = cache->value();
       } else {
         res = Helpers::const_get(state, call_frame, sym, &found);
-        if(found) cache->update(state, res);
+        if(found) cache->update(state, res, sc);
       }
     } else {
       res = Helpers::const_get(state, call_frame, sym, &found);
       if(found) {
-        cache = GlobalCacheEntry::create(state, res);
+        cache = GlobalCacheEntry::create(state, res, sc);
         call_frame->cm->literals()->put(state, association_index, cache);
       } else {
         res = Helpers::const_missing(state, sym, call_frame);
@@ -604,7 +627,14 @@ extern "C" {
     if(Autoload* autoload = try_as<Autoload>(res)) {
       res = autoload->resolve(state, call_frame);
       if(cache && res) {
-        cache->update(state, res);
+        // Past a GC point, reload values.
+        val = call_frame->cm->literals()->at(state, association_index);
+        sc = call_frame->static_scope();
+        cache = try_as<GlobalCacheEntry>(val);
+
+        if(cache) {
+          cache->update(state, res, sc);
+        }
       }
     }
 
@@ -668,8 +698,8 @@ extern "C" {
   }
 
   Object* rbx_prologue_check(STATE, CallFrame* call_frame) {
-    if(!state->check_stack(call_frame, &state)) return NULL;
-    if(!state->check_async(call_frame)) return NULL;
+    if(!state->check_interrupts(call_frame, &state)) return NULL;
+
     if(!state->interrupts.check) return Qtrue;
 
     state->interrupts.checked();
@@ -919,10 +949,10 @@ extern "C" {
       cache = reinterpret_cast<InlineCache*>(vmm->opcodes[call_frame->ip() + 1]);
     }
 
-    if(cache) {
-      if(cache->name->symbol_p()) {
-        std::cout << "Uncommon trap for send: " << cache->name->c_str(state) << "\n";
-      }
+    if(cache && cache->name->symbol_p()) {
+      std::cout << "Uncommon trap for send: " << cache->name->c_str(state) << "\n";
+    } else {
+      std::cout << "Unknown uncommon try reason.\n";
     }
     */
 

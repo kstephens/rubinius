@@ -30,8 +30,9 @@ namespace rubinius {
 
   private:
     Object* starter_; // slot
-    Object* value_; // slot
+    Array* value_; // slot
     Fiber* prev_; // slot
+    Exception* exception_; // slot
     CallFrame* top_;
     Status status_;
     VM* state_;
@@ -43,8 +44,9 @@ namespace rubinius {
 
   public:
     attr_accessor(starter, Object);
-    attr_accessor(value, Object);
+    attr_accessor(value, Array);
     attr_accessor(prev, Fiber);
+    attr_accessor(exception, Exception)
 
     CallFrame* call_frame() {
       return top_;
@@ -88,6 +90,9 @@ namespace rubinius {
 
     // Ruby.primitive :fiber_resume
     Object* resume(STATE, Arguments& args, CallFrame* calling_environment);
+
+    // Ruby.primitive :fiber_transfer
+    Object* transfer(STATE, Arguments& args, CallFrame* calling_environment);
 
     // Ruby.primitive :fiber_s_yield
     static Object* s_yield(STATE, Arguments& args, CallFrame* calling_environment);

@@ -80,3 +80,4 @@ time.rbc
 true.rbc
 variable_scope.rbc
 vm.rbc
+capi.rbc

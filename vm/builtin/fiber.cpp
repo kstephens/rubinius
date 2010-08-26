@@ -4,9 +4,11 @@
 
 
 #include "builtin/object.hpp"
+#include "builtin/array.hpp"
 #include "vm/vm.hpp"
 #include "builtin/class.hpp"
 #include "builtin/integer.hpp"
+#include "builtin/exception.hpp"
 
 #include "objectmemory.hpp"
 #include "gc/gc.hpp"
@@ -40,6 +42,7 @@ namespace rubinius {
       state->om->needs_finalization(fib, (FinalizerFunction)&Fiber::finalize);
 
       state->current_fiber.set(fib);
+      state->root_fiber.set(fib);
     }
 
     return fib;
@@ -57,17 +60,31 @@ namespace rubinius {
     // Affix this fiber to this thread now.
     fib->state_ = state;
 
-    fib->starter()->send(state, NULL, G(sym_call));
+    Array* result = (Array*)Qnil;
+    Object* obj = fib->starter()->send(state, NULL, G(sym_call), fib->value(), Qnil, false);
     // GC has run! Don't use stack vars!
 
     fib = Fiber::current(state);
     fib->status_ = Fiber::eDead;
+    fib->set_ivar(state, state->symbol("@dead"), Qtrue);
 
     Fiber* dest = fib->prev();
     assert(!dest->nil_p());
 
+    // Box this up so it's in a standard format at the point
+    // of returning, so we can deal with it in the same way
+    // as *args from #yield, #resume, and #transfer
+    if(obj) {
+      result = Array::create(state, 1);
+      result->set(state, 0, obj);
+    } else {
+      if(state->thread_state()->raise_reason() == cException) {
+        dest->exception(state, state->thread_state()->current_exception());
+      }
+    }
+
     dest->run();
-    dest->value(state, Qnil);
+    dest->value(state, result);
     state->set_current_fiber(dest);
 
     if(setcontext(dest->ucontext()) != 0)
@@ -119,15 +136,15 @@ namespace rubinius {
 
   Object* Fiber::resume(STATE, Arguments& args, CallFrame* calling_environment) {
 #ifdef FIBER_ENABLED
-    if(!prev_->nil_p() || root_) return Primitives::failure();
-
-    Object* val = Qnil;
-    if(args.total() == 1) {
-      val = args.get_argument(0);
-    } else if(args.total() > 1) {
-      val = args.as_array(state);
+    if(status_ == Fiber::eDead) {
+      Exception::fiber_error(state, "dead fiber called");
     }
 
+    if(!prev_->nil_p()) {
+      Exception::fiber_error(state, "double resume");
+    }
+
+    Array* val = args.as_array(state);
     value(state, val);
 
     Fiber* cur = Fiber::current(state);
@@ -146,7 +163,71 @@ namespace rubinius {
     // can't be accessed.
 
     cur = Fiber::current(state);
-    return cur->value();
+
+    if(!cur->exception()->nil_p()) {
+      state->thread_state()->raise_exception(cur->exception());
+      cur->exception(state, (Exception*)Qnil);
+      return 0;
+    }
+
+    Array* ret = cur->value();
+
+    if(ret->nil_p()) return Qnil;
+
+    switch(ret->size()) {
+    case 0:  return Qnil;
+    case 1:  return ret->get(state, 0);
+    default: return ret;
+    }
+#else
+    return Primitives::failure();
+#endif
+  }
+
+  Object* Fiber::transfer(STATE, Arguments& args, CallFrame* calling_environment) {
+#ifdef FIBER_ENABLED
+    if(status_ == Fiber::eDead) {
+      Exception::fiber_error(state, "dead fiber called");
+    }
+
+    Array* val = args.as_array(state);
+    value(state, val);
+
+    Fiber* cur = Fiber::current(state);
+    Fiber* root = state->root_fiber.get();
+    assert(root);
+
+    prev(state, root);
+
+    cur->sleep(calling_environment);
+
+    run();
+    state->set_current_fiber(this);
+
+    if(swapcontext(cur->ucontext(), context_) != 0)
+      assert(0 && "fatal swapcontext() error");
+
+    // Back here when someone transfers back to us!
+    // Beware here, because the GC has probably run so GC pointers on the C++ stack
+    // can't be accessed.
+
+    cur = Fiber::current(state);
+
+    if(!cur->exception()->nil_p()) {
+      state->thread_state()->raise_exception(cur->exception());
+      cur->exception(state, (Exception*)Qnil);
+      return 0;
+    }
+
+    Array* ret = cur->value();
+
+    if(ret->nil_p()) return Qnil;
+
+    switch(ret->size()) {
+    case 0:  return Qnil;
+    case 1:  return ret->get(state, 0);
+    default: return ret;
+    }
 #else
     return Primitives::failure();
 #endif
@@ -159,15 +240,13 @@ namespace rubinius {
 
     assert(cur != dest_fib);
 
-    cur->prev(state, (Fiber*)Qnil);
-
-    Object* val = Qnil;
-    if(args.total() == 1) {
-      val = args.get_argument(0);
-    } else if(args.total() > 1) {
-      val = args.as_array(state);
+    if(cur->root_) {
+      Exception::fiber_error(state, "can't yield from root fiber");
     }
 
+    cur->prev(state, (Fiber*)Qnil);
+
+    Array* val = args.as_array(state);
     dest_fib->value(state, val);
 
     cur->sleep(calling_environment);
@@ -183,7 +262,16 @@ namespace rubinius {
     // can't be accessed.
 
     cur = Fiber::current(state);
-    return cur->value();
+
+    Array* ret = cur->value();
+
+    if(ret->nil_p()) return Qnil;
+
+    switch(ret->size()) {
+    case 0:  return Qnil;
+    case 1:  return ret->get(state, 0);
+    default: return ret;
+    }
 #else
     return Primitives::failure();
 #endif

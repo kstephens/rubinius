@@ -195,8 +195,7 @@ class Float
           elsif infinite? then
             self < 0 ? "-inf" : "inf"
           else
-            # HACK shouldn't ignore the mantissa.
-            ("%.*g" % [17, self]) #  + ms.serialize_mantissa(self)
+            ("%.*g" % [17, self]) + ms.serialize_mantissa(self)
           end
     "f#{ms.serialize_integer(str.length)}#{str}"
   end
@@ -293,6 +292,16 @@ module Marshal
       @call = true
     end
 
+    def const_lookup(name)
+      mod = Object
+
+      parts = String(name).split '::'
+      parts.each { |part| mod = mod.const_get(part) }
+
+      mod
+    end
+
+
     def add_object(obj)
       return if obj.__kind_of__(ImmediateValue)
       sz = @links.size
@@ -323,7 +332,7 @@ module Marshal
               # Don't use construct_symbol, because we must not
               # memoize this symbol.
               name = get_byte_sequence.to_sym
-              obj = Object.const_lookup name
+              obj = const_lookup name
 
               store_unique_object obj
 
@@ -372,7 +381,7 @@ module Marshal
               @modules ||= []
 
               name = get_symbol
-              @modules << Object.const_lookup(name)
+              @modules << const_lookup(name)
 
               obj = construct nil, false
 
@@ -400,7 +409,7 @@ module Marshal
 
       call obj if @proc and call_proc
 
-      obj
+      @stream.tainted? ? obj.taint : obj
     end
 
     def construct_array
@@ -529,7 +538,7 @@ module Marshal
 
     def construct_object
       name = get_symbol
-      klass = Object.const_lookup name
+      klass = const_lookup name
       obj = klass.allocate
 
       raise TypeError, 'dump format error' unless Object === obj
@@ -565,7 +574,7 @@ module Marshal
       name = get_symbol
       store_unique_object name
 
-      klass = Object.const_lookup name
+      klass = const_lookup name
       members = klass.members
 
       obj = klass.allocate
@@ -593,7 +602,7 @@ module Marshal
 
     def construct_user_defined(ivar_index)
       name = get_symbol
-      klass = Module.const_lookup name
+      klass = const_lookup name
 
       data = get_byte_sequence
 
@@ -613,7 +622,7 @@ module Marshal
       name = get_symbol
       store_unique_object name
 
-      klass = Module.const_lookup name
+      klass = const_lookup name
       obj = klass.allocate
 
       extend_object obj if @modules
@@ -631,12 +640,14 @@ module Marshal
     end
 
     def consume(bytes)
+      raise ArgumentError, "marshal data too short" if @consumed > @stream.size
       data = @stream[@consumed, bytes]
       @consumed += bytes
       data
     end
 
     def consume_byte
+      raise ArgumentError, "marshal data too short" if @consumed > @byte_array.size
       data = @byte_array[@consumed]
       @consumed += 1
       return data
@@ -660,7 +671,7 @@ module Marshal
     end
 
     def get_user_class
-      cls = Module.const_lookup @user_class
+      cls = const_lookup @user_class
       @user_class = nil
       cls
     end
@@ -709,7 +720,7 @@ module Marshal
 
       @depth += 1
 
-      return str
+      obj.tainted? ? str.taint : str
     end
 
     def serialize_extended_object(obj)
@@ -723,23 +734,20 @@ module Marshal
     end
 
     def serialize_mantissa(flt)
-      str = "\0" * 32
-
+      str = ""
       flt = Math.modf(Math.ldexp(Math.frexp(flt.abs)[0], 37))[0]
-      p :inner => flt
       if flt > 0
-        i = 1
+        str = "\0" * 32
+        i = 0
         while flt > 0
           flt, n = Math.modf(Math.ldexp(flt, 32))
           n = n.to_i
-          p :mant => n
           str[i += 1] = (n >> 24) & 0xff
           str[i += 1] = (n >> 16) & 0xff
           str[i += 1] = (n >> 8) & 0xff
           str[i += 1] = (n & 0xff)
         end
-
-        str.chomp!("\0")
+        str.gsub!(/(\000)*\Z/, '')
       end
       str
     end

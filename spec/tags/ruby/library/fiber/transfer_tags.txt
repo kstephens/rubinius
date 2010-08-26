@@ -1,0 +1,1 @@
+fails:Fiber#transfer raises a LocalJumpError if the block includes a break statement

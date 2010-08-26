@@ -1,8 +1,9 @@
 module Rubinius
   module AST
     class AsciiGrapher
-      def initialize(ast)
+      def initialize(ast, node_kind=Node)
         @ast = ast
+        @node_kind = node_kind
       end
 
       def print
@@ -31,7 +32,7 @@ module Rubinius
           # lame, yes. remove when Node doesn't have @body by default
           next if v == "@body" and value.nil? and not v.respond_to? :body=
 
-          if value.kind_of? Node
+          if value.kind_of? @node_kind
             nodes << [v, value]
           else
             graph_value v, value, level
@@ -58,7 +59,7 @@ module Rubinius
           puts "#{" " * level}#{name}: \\"
           nodes = []
           value.each do |v|
-            if v.kind_of? Node
+            if v.kind_of? @node_kind
               nodes << v
             else
               graph_value "-", v, level + 2

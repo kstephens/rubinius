@@ -73,33 +73,6 @@ module Rubinius
     end
 
     ##
-    # Update +self+ out of a string, using +bc+ as the iseq,
-    # +lcls+ as the number local variables, and +req+ as the required args.
-    #
-    # @todo make sure InstructionSequence is the actual class name
-    # @param  [InstructionSequence] bc the "bytecode" or
-    #   instructions that are the actual method. This *should* be an instance
-    #   of InstructionSequence (which is a subclass of {Tuple})
-    # @param  [Integer] lcls the number of local variables in the method
-    # @param  [Array<Symbol>] req the required arguments
-    # @return [Rubinius::CompiledMethod]
-    def from_string(bc, lcls, req)
-      # set everything to be empty, except
-      # for the args supplied
-      @iseq          = bc           # set the instruction sequence
-      @primitive     = nil          # the primitive operation to be run upon execution
-      @local_count   = lcls         # this is how many locals we have
-      @literals      = Tuple.new(0) # we can has no literals
-      @exceptions    = nil
-      @lines         = nil
-      @file          = nil
-      @name          = nil
-      @path          = nil
-      @required_args = req
-      return self
-    end
-
-    ##
     # Returns the index of local +name+ or nil if there is no local.
     #
     def local_slot(name)
@@ -420,36 +393,17 @@ module Rubinius
     # exactly match the bytecode currently held by the CompiledMethod, typically
     # as a result of substituting yield_debugger instructions into the bytecode.
     def decode(bytecodes = @iseq)
-      stream = bytecodes.decode(false)
+      require 'compiler/iseq'
+
+      decoder = Rubinius::InstructionDecoder.new(bytecodes)
+      stream = decoder.decode(false)
       ip = 0
-      args_reg = 0
-      stream.map! do |inst|
-        instruct = Instruction.new(inst, self, ip, args_reg)
+
+      stream.map do |inst|
+        instruct = Instruction.new(inst, self, ip)
         ip += instruct.size
-        if instruct.opcode == :set_args
-          args_reg = 0
-        elsif instruct.opcode == :cast_array_for_args
-          args_reg = instruct.args.first
-        end
         instruct
       end
-
-      ##
-      # Add a convenience method to the array containing the decoded instructions
-      # to convert an IP address to the index of the corresponding instruction
-      #
-      # This method is generated upon running decode, which means it will
-      # be different after every call to #decode!
-      def stream.ip_to_index(ip)
-        if ip < 0 or ip > last.ip
-          raise ArgumentError, "IP address is outside valid range of 0 to #{last.ip} (got #{ip})"
-        end
-        each_with_index do |inst, i|
-          return i if ip <= inst.ip
-        end
-      end
-
-      stream
     end
 
     ##
@@ -547,10 +501,11 @@ module Rubinius
     # To generate VM opcodes documentation
     # use rake doc:vm task.
     class Instruction
-      def initialize(inst, cm, ip, args_reg)
+      def initialize(inst, cm, ip)
         @op = inst[0]
         @args = inst[1..-1]
         @comment = nil
+
         @args.each_index do |i|
           case @op.args[i]
           when :literal
@@ -564,9 +519,10 @@ module Rubinius
           when :block_local
             # TODO: Blocks should be able to retrieve enclosing block local names as well,
             # but need access to static scope
-            @args[i] = cm.local_names[args[i]] if cm.local_names and args[0] == 0
+            #@args[i] = cm.local_names[args[i]] if cm.local_names and args[0] == 0
           end
         end
+
         @ip = ip
         @line = cm.line_from_ip(ip)
       end

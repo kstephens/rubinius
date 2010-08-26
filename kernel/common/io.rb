@@ -215,8 +215,6 @@ class IO
   def self.foreach(name, sep_string = $/)
     return to_enum(:foreach, name, sep_string) unless block_given?
 
-    sep_string ||= ''
-
     name = StringValue(name)
 
     if name[0] == ?|
@@ -226,7 +224,11 @@ class IO
       io = File.open(name, 'r')
     end
 
-    sep = StringValue(sep_string)
+    if sep_string.nil?
+      sep = sep_string
+    else
+      sep = StringValue(sep_string)
+    end
 
     begin
       while line = io.gets(sep)
@@ -626,8 +628,12 @@ class IO
     cur_mode &= ACCMODE
 
     if mode
-      str_mode = StringValue mode
-      mode = IO.parse_mode(str_mode) & ACCMODE
+      if !Type.obj_kind_of?(mode, Integer)
+        str_mode = StringValue mode
+        mode = IO.parse_mode(str_mode)
+      end
+
+      mode &= ACCMODE
 
       if (cur_mode == RDONLY or cur_mode == WRONLY) and mode != cur_mode
         raise Errno::EINVAL, "Invalid new mode '#{str_mode}' for existing descriptor #{fd}"
@@ -1401,6 +1407,9 @@ class IO
     buffer.replace(sysread(size)) if size > 0
 
     buffer
+  rescue
+    buffer.replace('') if buffer
+    raise
   end
 
   ##
@@ -1440,11 +1449,16 @@ class IO
       # If a mode isn't passed in, use the mode that the IO is already in.
       if mode.equal? undefined
         mode = @mode
+        # If this IO was already opened for writing, we should
+        # create the target file if it doesn't already exist.
+        if (mode & RDWR == RDWR) || (mode & WRONLY == WRONLY)
+          mode |= CREAT
+        end
       else
         mode = IO.parse_mode(mode)
       end
 
-      reopen_path(StringValue(other), mode | CREAT)
+      reopen_path(StringValue(other), mode)
       seek 0, SEEK_SET
     end
 
@@ -1655,10 +1669,11 @@ class IO
   end
 
   def write_nonblock(data)
+    ensure_open_and_writable
+
     data = String data
     return 0 if data.length == 0
 
-    ensure_open_and_writable
     @ibuffer.unseek!(self) unless @sync
 
     raw_write(data)

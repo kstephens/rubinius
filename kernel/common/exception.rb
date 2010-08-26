@@ -222,6 +222,9 @@ end
 class ThreadError < StandardError
 end
 
+class FiberError < StandardError
+end
+
 class TypeError < StandardError
 end
 
@@ -274,6 +277,10 @@ class SyntaxError < ScriptError
     @column = c
     @line = l
     @code = code
+  end
+
+  def reason
+    @reason_message
   end
 
   def message
