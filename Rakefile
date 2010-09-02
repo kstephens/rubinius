@@ -161,8 +161,10 @@ desc "Create Rubinius::SprintfCompiler"
 task :sprintf_compiler do
   src = "../ruby_sprintf_compiler/lib/sprintf_compiler.rb"
   dst = "kernel/common/sprintf_compiler.rb"
+  rbc = dst.sub(/^kernel\//, 'runtime/').sub(/\.rb/, '.rbc') 
   if ! File.exist?(dst) || (File.mtime(src) > File.mtime(dst))
     $stdout.puts "  Creating #{dst} from #{src}"
+    File.unlink(rbc) if File.exist?(rbc)
     File.open(dst, "w+") do | fh |
       fh.puts "module Rubinius"
       fh.puts File.read(src)
