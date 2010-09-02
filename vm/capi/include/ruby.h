@@ -35,6 +35,7 @@
 #include <fcntl.h>
 #include <errno.h>
 
+#include "config.h"
 #include "intern.h"
 #include "defines.h"
 
@@ -47,10 +48,6 @@
 # ifndef  HAVE_STDARG_PROTOTYPES
 #  define HAVE_STDARG_PROTOTYPES 1
 # endif
-#endif
-
-#ifndef NORETURN
-#define NORETURN(x) __attribute__ ((noreturn)) x
 #endif
 
 #undef _
@@ -850,6 +847,9 @@ VALUE rb_uint2big(unsigned long number);
   int     rb_big_bytes_used(VALUE obj);
 #define RBIGNUM_LEN(obj) rb_big_bytes_used(obj)
 
+  int rb_big_sign(VALUE obj);
+#define RBIGNUM_SIGN(obj) rb_big_sign(obj)
+
   // fake out, used with RBIGNUM_LEN anyway, which provides
   // the full answer
 #define SIZEOF_BDIGITS 1
@@ -872,7 +872,7 @@ VALUE rb_uint2big(unsigned long number);
 #define OBJ_FROZEN(obj) (RTEST(rb_obj_frozen_p(obj)))
 
   /** raise error on class */
-  void    rb_error_frozen(const char* what);
+  NORETURN(void rb_error_frozen(const char* what));
 
   /** Raises an exception if obj_handle is not the same type as 'type'. */
   void    rb_check_type(VALUE obj_handle, int type);
@@ -1063,7 +1063,7 @@ VALUE rb_uint2big(unsigned long number);
   VALUE   rb_exc_new3(VALUE etype, VALUE str);
 
   /** Raises passed exception handle */
-  void    rb_exc_raise(VALUE exc_handle);
+  NORETURN(void rb_exc_raise(VALUE exc_handle));
 
   /** Return the current exception */
   VALUE   rb_errinfo();
@@ -1109,6 +1109,9 @@ VALUE rb_uint2big(unsigned long number);
    */
   #define rb_funcall3 rb_funcall2
 
+  /** Return the hash id of the object **/
+  VALUE   rb_hash(VALUE self);
+
   /** Create a new Hash object */
   VALUE   rb_hash_new();
 
@@ -1123,6 +1126,9 @@ VALUE rb_uint2big(unsigned long number);
 
   /** Remove the key and return the associated value. */
   VALUE   rb_hash_delete(VALUE self, VALUE key);
+
+  /** Removes the entry if the block returns true. */
+  VALUE   rb_hash_delete_if(VALUE self);
 
   /** Returns the number of entries as a Fixnum. */
   VALUE   rb_hash_size(VALUE self);
@@ -1195,6 +1201,7 @@ VALUE rb_uint2big(unsigned long number);
 
   /** Coerce x and y; perform 'x func y' if coerce succeeds, else return Qnil. */
   VALUE rb_num_coerce_cmp(VALUE x, VALUE y, ID func);
+#define RB_NUM_COERCE_FUNCS_NEED_OPID 1
 
   /** Call #initialize on the object with given arguments. */
   void    rb_obj_call_init(VALUE object_handle, int arg_count, VALUE* args);
@@ -1524,7 +1531,7 @@ VALUE rb_uint2big(unsigned long number);
   char*   rb_str2cstr(VALUE str_handle, long *len);
 
   /** Raises an exception from the value of errno. */
-  void rb_sys_fail(const char* mesg);
+  NORETURN(void rb_sys_fail(const char* mesg));
 
   /** Evaluate the given string. */
   VALUE   rb_eval_string(const char* string);
@@ -1604,14 +1611,14 @@ VALUE rb_uint2big(unsigned long number);
 
   VALUE   rb_Integer(VALUE object_handle);
 
-  void    rb_bug(const char *fmt, ...);
+  NORETURN(void rb_bug(const char *fmt, ...));
 
-  void    rb_fatal(const char *fmt, ...);
+  NORETURN(void rb_fatal(const char *fmt, ...));
 
-  void    rb_notimplement();
+  NORETURN(void rb_notimplement());
 
   /** Raises an ArgumentError exception. */
-  void rb_invalid_str(const char *str, const char *type);
+  NORETURN(void rb_invalid_str(const char *str, const char *type));
 
   /** Print a warning if $VERBOSE is not nil. */
   void    rb_warn(const char *fmt, ...);
